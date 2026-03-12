@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    body { font-family: sans-serif; padding: 15px; background-color: #f8f9fa; }
+    .header-box { background: #34495e; color: white; padding: 15px; border-radius: 8px; text-align: center; margin-bottom: 20px; }
+    .section-card { background: white; border: 1px solid #ddd; border-radius: 8px; padding: 15px; margin-bottom: 20px; }
+    input, select, button { width: 100%; padding: 10px; margin-bottom: 12px; border-radius: 5px; border: 1px solid #ccc; box-sizing: border-box; }
+    button { font-weight: bold; cursor: pointer; color: white; }
+    .btn-in { background-color: #27ae60; }
+    .btn-out { background-color: #e67e22; }
+    #status { text-align: center; padding: 10px; border-radius: 4px; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div class="header-box">
+    <div id="clock">00:00:00 AM</div>
+  </div>
+
+  <div class="section-card">
+    <input type="text" id="name" placeholder="Full Name">
+    <input type="email" id="emailIn" placeholder="Email Address">
+    <select id="dept">
+        <option value="" disabled selected>Select Department</option>
+        <option value="IT">IT</option>
+        <option value="Admin">Admin</option>
+        <option value="Nursing">Nursing</option>
+    </select>
+    <input type="text" id="contact" placeholder="Contact Number">
+    <button class="btn-in" onclick="handleIn()">CLOCK IN</button>
+  </div>
+
+  <div class="section-card">
+    <input type="email" id="emailOut" placeholder="Email (Clock Out)">
+    <button class="btn-out" onclick="handleOut()">CLOCK OUT</button>
+  </div>
+
+  <div id="status"></div>
+
+  <script>
+    function updateClock() {
+      document.getElementById('clock').innerText = new Date().toLocaleTimeString();
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    function handleIn() {
+      const data = {
+        name: document.getElementById('name').value,
+        email: document.getElementById('emailIn').value,
+        dept: document.getElementById('dept').value,
+        contact: document.getElementById('contact').value
+      };
+      if(!data.name || !data.email || !data.dept) {
+        showStatus("⚠️ Please fill in all fields", "#fce4e4");
+        return;
+      }
+      process('in', data);
+    }
+
+    function handleOut() {
+      const email = document.getElementById('emailOut').value;
+      if(!email) {
+        showStatus("⚠️ Please enter your email", "#fce4e4");
+        return;
+      }
+      process('out', { email: email });
+    }
+
+    function process(type, data) {
+      showStatus("Processing...", "#eee");
+
+      google.script.run
+        .withSuccessHandler(msg => {
+          showStatus(msg, msg.includes('✅') || msg.includes('👋') ? "#d4edda" : "#f8d7da");
+          
+          if(msg.includes('✅') || msg.includes('👋')) {
+            document.querySelectorAll('input').forEach(i => i.value = "");
+            if (typeof loadHistory === "function") loadHistory(); 
+          }
+        })
+        .withFailureHandler(err => {
+          showStatus("🚨 SCRIPT ERROR: " + err.message, "#f8d7da");
+          console.error(err);
+        })
+        .handleAttendance(data, type);
+    }
+
+    function showStatus(msg, color) {
+      const s = document.getElementById('status');
+      s.innerText = msg;
+      s.style.backgroundColor = color;
+    }
+  </script>
+</body>
+</html>
