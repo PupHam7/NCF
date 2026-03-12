@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    body { font-family: sans-serif; padding: 15px; background: #f4f4f9; }
+    .card { background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 15px; }
+    h3 { margin-top: 0; color: #2c3e50; font-size: 16px; border-bottom: 2px solid #3498db; padding-bottom: 5px; }
+    label { font-size: 12px; font-weight: bold; color: #7f8c8d; }
+    input, select, button { width: 100%; padding: 10px; margin: 8px 0; border-radius: 4px; border: 1px solid #ddd; box-sizing: border-box; }
+    .btn-add { background: #27ae60; color: white; border: none; cursor: pointer; }
+    .btn-update { background: #2980b9; color: white; border: none; cursor: pointer; }
+    .btn-remove { background: #c0392b; color: white; border: none; cursor: pointer; }
+    #status { padding: 10px; border-radius: 4px; font-size: 12px; text-align: center; display: none; }
+  </style>
+</head>
+<body>
+
+  <div class="card">
+    <h3>📦 Item Manager</h3>
+    <label>CATEGORY</label>
+    <select id="type">
+      <option value="Equipment">Equipment </option>
+      <option value="Consumables">Consumables </option>
+    </select>
+    
+    <label>ITEM NAME</label>
+    <input type="text" id="itemName" placeholder="e.g., Stethoscope">
+    
+    <label>STOCK QUANTITY</label>
+    <input type="number" id="itemStock" placeholder="Enter number">
+    
+    <button class="btn-add" onclick="run('add')">ADD NEW ITEM</button>
+    <button class="btn-update" onclick="run('update')">UPDATE STOCK LEVEL</button>
+    <button class="btn-remove" onclick="run('remove')">REMOVE ITEM</button>
+  </div>
+
+  <div id="status"></div>
+
+  <script>
+    function run(action) {
+      const status = document.getElementById('status');
+      const data = {
+        type: document.getElementById('type').value,
+        name: document.getElementById('itemName').value,
+        stock: document.getElementById('itemStock').value
+      };
+
+      if (!data.name && action !== 'add') return;
+      
+      status.style.display = "block";
+      status.style.background = "#eee";
+      status.innerText = "Processing...";
+
+      google.script.run
+        .withSuccessHandler(msg => {
+          status.innerText = msg;
+          status.style.background = msg.includes('✅') ? "#d4edda" : "#f8d7da";
+          if (msg.includes('✅')) {
+            document.getElementById('itemName').value = "";
+            document.getElementById('itemStock').value = "";
+          }
+        })
+        .modifyInventory(action, data);
+    }
+  </script>
+</body>
+</html>
