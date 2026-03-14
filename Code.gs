@@ -30,7 +30,7 @@ function handleAttendance(data, type) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName("Attendance");
   var lastRow = sheet.getLastRow();
-  var range = sheet.getRange(1, 1, lastRow || 2, 6); 
+  var range = sheet.getRange(1, 1, lastRow || 2, 6);
   var values = range.getValues();
   var now = new Date();
 
@@ -47,18 +47,18 @@ function handleAttendance(data, type) {
         return "⚠️ This email is already clocked in!";
       }
     }
-    
+
     // Use the cleaned 11-digit number for the record
     sheet.appendRow([now, data.dept, data.name, data.email, "'" + cleanContact, ""]);
     sheet.getRange(sheet.getLastRow(), 1).setNumberFormat("M/d/yyyy H:mm:ss AM/PM");
     return "✅ Clocked In: " + now.toLocaleTimeString();
-  } 
-  
+  }
+
   if (type === 'out') {
     for (var i = values.length - 1; i >= 0; i--) {
       if (values[i][3] === data.email && (!values[i][5] || values[i][5] === "")) {
         var outCell = sheet.getRange(i + 1, 6);
-        outCell.setValue(now).setNumberFormat("M/d/yyyy H:mm:ss AM/PM"); 
+        outCell.setValue(now).setNumberFormat("M/d/yyyy H:mm:ss AM/PM");
         return "👋 Clocked Out: " + now.toLocaleTimeString();
       }
     }
@@ -97,8 +97,8 @@ function updateAndGuardInventory() {
 function processConsumableBorrow(sheet, invSheet, ownerEmail) {
   var lastRow = sheet.getLastRow();
   var data = sheet.getRange(lastRow, 1, 1, 4).getValues()[0];
-  var email = data[1];   
-  var rawItem = data[2]; 
+  var email = data[1];
+  var rawItem = data[2];
   var cleanItem = rawItem.split(" (")[0];
 
   if (rawItem.indexOf("OUT OF STOCK") !== -1) {
@@ -109,7 +109,7 @@ function processConsumableBorrow(sheet, invSheet, ownerEmail) {
 
   // Lookup Expiry Date in Col J (Index 4 of the F-J range)
   var expiry = "N/A";
-  var consData = invSheet.getRange(11, 6, invSheet.getLastRow() - 10, 5).getValues(); 
+  var consData = invSheet.getRange(11, 6, invSheet.getLastRow() - 10, 5).getValues();
   for (var i = 0; i < consData.length; i++) {
     if (consData[i][0] === cleanItem) {
       expiry = consData[i][4] instanceof Date ? consData[i][4].toLocaleDateString() : consData[i][4];
@@ -129,7 +129,7 @@ function processConsumableBorrow(sheet, invSheet, ownerEmail) {
 function processEquipmentBorrow(sheet, ownerEmail) {
   var lastRow = sheet.getLastRow();
   var data = sheet.getRange(lastRow, 1, 1, 4).getValues()[0];
-  var rawItem = data[1]; 
+  var rawItem = data[1];
   var email = data[3];
   var cleanItem = rawItem.split(" (")[0];
 
@@ -137,7 +137,7 @@ function processEquipmentBorrow(sheet, ownerEmail) {
     MailApp.sendEmail(ownerEmail, "⚠️ OOS Alert", email + " tried to borrow " + cleanItem);
     sheet.deleteRow(lastRow);
   } else if (email) {
-    MailApp.sendEmail(email, "✅ Equipment Confirmed","Dear Clinical Instructors," + "\nGood day. This email serves as a confirmation that the Equipment and Consumables Borrowing Google Form has been successfully completed and submitted. The details of the requested equipment or consumable supplies have been recorded in the system for documentation and monitoring purposes." + "\n\nThank you for your time and continued support in maintaining an organized and efficient inventory management system." + "\n\nBorrowed: " + cleanItem);
+    MailApp.sendEmail(email, "✅ Equipment Confirmed", "Dear Clinical Instructors," + "\nGood day. This email serves as a confirmation that the Equipment and Consumables Borrowing Google Form has been successfully completed and submitted. The details of the requested equipment or consumable supplies have been recorded in the system for documentation and monitoring purposes." + "\n\nThank you for your time and continued support in maintaining an organized and efficient inventory management system." + "\n\nBorrowed: " + cleanItem);
   }
 }
 
@@ -145,7 +145,7 @@ function processEquipmentBorrow(sheet, ownerEmail) {
 function processReturn(sheet, ownerEmail) {
   var lastRow = sheet.getLastRow();
   var data = sheet.getRange(lastRow, 1, 1, 3).getValues()[0];
-  var email = data[1]; 
+  var email = data[1];
   var rawItem = data[2];
   var cleanItem = rawItem.split(" (")[0];
 
@@ -153,61 +153,67 @@ function processReturn(sheet, ownerEmail) {
 }
 
 function updateAllFormChoicesAndColors(invSheet) {
-  var formEq = FormApp.openById("1rSJn5YLn82-66SQbQTHEkEjWMEIUQxwtPQPl27hlw3Q"); 
+  var formEq = FormApp.openById("1rSJn5YLn82-66SQbQTHEkEjWMEIUQxwtPQPl27hlw3Q");
   var formRet = FormApp.openById("1NlpLyxbz6hDxceATUjCc0QZgATXr2fCOOHZWlO44giI");
-  var formCons = FormApp.openById("1oTABVbzviWQ-x-_ufVm_1kq0KffLzR57-UpyMRCi4E8"); 
+  var formCons = FormApp.openById("1oTABVbzviWQ-x-_ufVm_1kq0KffLzR57-UpyMRCi4E8");
 
   var lastRow = invSheet.getLastRow();
   if (lastRow < 11) return;
 
   var eqChoices = [], consChoices = [];
+  var now = new Date();
+  now.setHours(0, 0, 0, 0);
 
-  // 1. Process Equipment (A-D)
+  // --- 1. Process Equipment (A-D) ---
   var eqData = invSheet.getRange(11, 1, lastRow - 10, 4).getValues();
-  eqData.forEach(function(row, i) {
-    if (row[0]) { 
-      var label = row[0] + (row[3] > 0 ? " (" + row[3] + " available)" : " (OUT OF STOCK)");
+  var currentEqRoom = "General"; // Default if no room is found yet
+
+  eqData.forEach(function (row, i) {
+    var itemName = row[0] ? row[0].toString().trim() : "";
+    if (itemName === "") return;
+
+    if (itemName.toLowerCase().includes("room")) {
+      currentEqRoom = itemName; // Update the current room (e.g., "Room 301")
+    } else {
+      var label = "[" + currentEqRoom + "] " + itemName + (row[3] > 0 ? " (" + row[3] + " available)" : " (OUT OF STOCK)");
       eqChoices.push(label);
       invSheet.getRange(i + 11, 1, 1, 4).setBackground(row[3] <= 3 ? "#ff9999" : null);
     }
   });
 
-  // 2. Process Consumables (F-I)
-  var consData = invSheet.getRange(11, 6, lastRow - 10, 5).getValues(); 
-  var now = new Date();
-  now.setHours(0, 0, 0, 0); // Normalize today's time
+  // --- 2. Process Consumables (F-J) ---
+  var consData = invSheet.getRange(11, 6, lastRow - 10, 5).getValues();
+  var currentConsRoom = "General";
 
-  consData.forEach(function(row, i) {
-    if (row[0]) { 
-      var label = row[0] + (row[3] > 0 ? " (" + row[3] + " available)" : " (OUT OF STOCK)");
+  consData.forEach(function (row, i) {
+    var itemName = row[0] ? row[0].toString().trim() : "";
+    if (itemName === "") return;
+
+    if (itemName.toLowerCase().includes("room")) {
+      currentConsRoom = itemName;
+    } else {
+      var label = "[" + currentConsRoom + "] " + itemName + (row[3] > 0 ? " (" + row[3] + " available)" : " (OUT OF STOCK)");
       consChoices.push(label);
-      
+
       var currentRow = i + 11;
       var expiryDate = row[4] instanceof Date ? new Date(row[4]) : null;
-      var expiryCell = invSheet.getRange(currentRow, 10); // Target ONLY Column J
+      var expiryCell = invSheet.getRange(currentRow, 10);
       var expiryColor = null;
 
       if (expiryDate) {
-        expiryDate.setHours(0, 0, 0, 0); // Normalize expiry time
+        expiryDate.setHours(0, 0, 0, 0);
         var diffInMs = expiryDate.getTime() - now.getTime();
         var diffInDays = Math.ceil(diffInMs / (1000 * 60 * 60 * 24));
-
-        if (diffInDays < 0) {
-          expiryColor = "#ff4d4d"; // RED: Expired
-        } else if (diffInDays === 0) {
-          expiryColor = "#ffa500"; // ORANGE: Expires Today
-        } else if (diffInDays <= 30) {
-          expiryColor = "#ffff00"; // YELLOW: 30 days remaining
-        }
+        if (diffInDays < 0) expiryColor = "#ff4d4d";
+        else if (diffInDays === 0) expiryColor = "#ffa500";
+        else if (diffInDays <= 30) expiryColor = "#ffff00";
       }
-
       expiryCell.setBackground(expiryColor);
 
-      // Keep your separate logic for highlighting the whole row if stock is low
       if (row[3] <= 3 || row[3] === "OUT OF STOCK") {
-        invSheet.getRange(currentRow, 6, 1, 4).setBackground("#ff9999"); // Rows F-I for Low Stock
+        invSheet.getRange(currentRow, 6, 1, 4).setBackground("#ff9999");
       } else {
-        invSheet.getRange(currentRow, 6, 1, 4).setBackground(null); // Reset F-I if stock is fine
+        invSheet.getRange(currentRow, 6, 1, 4).setBackground(null);
       }
     }
   });
@@ -215,18 +221,10 @@ function updateAllFormChoicesAndColors(invSheet) {
   // 3. Create Return List 
   var allChoices = [...new Set(eqChoices.concat(consChoices))];
 
-  // 4. Update Forms with unique values only
-  if (eqChoices.length > 0) {
-    formEq.getItems(FormApp.ItemType.MULTIPLE_CHOICE)[0].asMultipleChoiceItem().setChoiceValues([...new Set(eqChoices)]);
-  }
-  
-  if (consChoices.length > 0) {
-    formCons.getItems(FormApp.ItemType.MULTIPLE_CHOICE)[0].asMultipleChoiceItem().setChoiceValues([...new Set(consChoices)]);
-  }
-
-  if (allChoices.length > 0) {
-    formRet.getItems(FormApp.ItemType.MULTIPLE_CHOICE)[0].asMultipleChoiceItem().setChoiceValues(allChoices);
-  }
+  // 4. Update Forms
+  if (eqChoices.length > 0) formEq.getItems(FormApp.ItemType.MULTIPLE_CHOICE)[0].asMultipleChoiceItem().setChoiceValues([...new Set(eqChoices)]);
+  if (consChoices.length > 0) formCons.getItems(FormApp.ItemType.MULTIPLE_CHOICE)[0].asMultipleChoiceItem().setChoiceValues([...new Set(consChoices)]);
+  if (allChoices.length > 0) formRet.getItems(FormApp.ItemType.MULTIPLE_CHOICE)[0].asMultipleChoiceItem().setChoiceValues(allChoices);
 }
 
 // 8. OVERDUE REMINDERS (Time Trigger)
@@ -242,13 +240,13 @@ function sendOverdueReminders() {
     var timestamp = new Date(borrows[i][0]);
     var item = borrows[i][1].split(" (")[0];
     var email = borrows[i][3];
-    
+
     if ((now - timestamp) > (24 * 60 * 60 * 1000)) {
       var isReturned = returns.some(r => r[1] === email && r[2].indexOf(item) !== -1);
       if (!isReturned && email) {
-        MailApp.sendEmail(email, "⚠️ OVERDUE: Return Reminder", "Dear Clinical Instructors," + 
-        "\n\nGood day. This email serves as a notification that the borrowed equipment or consumable supplies recorded in the system have not yet been returned within the expected one-day period. According to the borrowing record submitted through the Google Form, the items remain unreturned as of this time. We kindly request your assistance in verifying the status of the borrowed materials and facilitating their return at the earliest convenience." + "\nYour prompt attention to this matter will help ensure the proper monitoring and availability of equipment and consumable supplies for other users. Thank you for your understanding and cooperation." 
-        + "\n\nThe item '" + item + "' is overdue.");
+        MailApp.sendEmail(email, "⚠️ OVERDUE: Return Reminder", "Dear Clinical Instructors," +
+          "\n\nGood day. This email serves as a notification that the borrowed equipment or consumable supplies recorded in the system have not yet been returned within the expected one-day period. According to the borrowing record submitted through the Google Form, the items remain unreturned as of this time. We kindly request your assistance in verifying the status of the borrowed materials and facilitating their return at the earliest convenience." + "\nYour prompt attention to this matter will help ensure the proper monitoring and availability of equipment and consumable supplies for other users. Thank you for your understanding and cooperation."
+          + "\n\nThe item '" + item + "' is overdue.");
       }
     }
   }
@@ -343,28 +341,21 @@ function refreshInventory() {
   );
 }
 
-/**
- * Handles the logic from the Sidebar UI to modify the Sheet
- */
+
 function modifyInventory(action, data) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const invSheet = ss.getSheetByName("Inventory");
   
-  // Define columns based on category
-  // Equipment: A(1) to D(4) | Consumables: F(6) to I(9)
   const isEq = data.type.includes("Equipment");
-  const startCol = isEq ? 1 : 6;
-  const nameColOffset = 0; // The name is in the first col of the block
-  const stockColOffset = 1; // Stock is in the second col (B or G)
-  
+  const startCol = isEq ? 1 : 6; // Column A for Eq, Column F for Consumables
   const lastRow = invSheet.getLastRow();
-  const range = invSheet.getRange(11, startCol, lastRow - 10, 2); // Get Name and Stock columns
+  
+  const range = invSheet.getRange(11, startCol, Math.max(lastRow - 10, 1), 2); 
   const values = range.getValues();
   
   let targetRow = -1;
   const searchName = data.name.trim().toLowerCase();
 
-  // Find the item if it exists
   for (let i = 0; i < values.length; i++) {
     if (values[i][0].toString().toLowerCase().trim() === searchName) {
       targetRow = i + 11;
@@ -374,28 +365,52 @@ function modifyInventory(action, data) {
 
   try {
     if (action === 'add') {
-      if (targetRow !== -1) return "⚠️ Item already exists! Use 'Update' instead.";
-      // Find first empty row in that specific column block
+      if (targetRow !== -1) return "⚠️ Item already exists!";
+      
       let rowToAdd = 11;
-      while (invSheet.getRange(rowToAdd, startCol).getValue() !== "") {
+      // Skip cells that are not empty OR contain "Room"
+      while (invSheet.getRange(rowToAdd, startCol).getValue() !== "" || 
+             invSheet.getRange(rowToAdd, startCol).getValue().toString().toLowerCase().includes("room")) {
         rowToAdd++;
+        if (rowToAdd > 2000) break; 
       }
+      
+      // 1. Set Item Name and Stock
       invSheet.getRange(rowToAdd, startCol).setValue(data.name);
-      invSheet.getRange(rowToAdd, startCol + stockColOffset).setValue(data.stock);
+      invSheet.getRange(rowToAdd, startCol + 1).setValue(data.stock);
+      
+      // 2. Apply the Log-based Formulas
+      var borrowedFormula = "";
+      var availableFormula = "";
+
+      if (isEq) {
+        // EQUIPMENT FORMULAS (Columns C and D)
+        borrowedFormula = '=SUMIF(Logs!$B$4:$B$991, A' + rowToAdd + ' & "*", Logs!$A$4:$A$991) - SUMIF(Logs!$L$4:$L$991, A' + rowToAdd + ' & "*", Logs!$K$4:$K$991)';
+        // Col D: Available (B - C)
+        availableFormula = '=B' + rowToAdd + '- C' + rowToAdd;
+      } else {
+        // CONSUMABLES FORMULAS (Columns H and I)
+        borrowedFormula = '=SUMIF(Logs!$V$4:$V$991, F' + rowToAdd + ' & "*", Logs!$U$4:$U$991) - SUMIF(Logs!$L$4:$L$991, F' + rowToAdd + ' & "*", Logs!$K$4:$K$991)';
+        // Col I: Available (G - H)
+        availableFormula = '=G' + rowToAdd + '- H' + rowToAdd;
+      }
+
+      // Set the formulas into the sheet
+      invSheet.getRange(rowToAdd, startCol + 2).setFormula(borrowedFormula);
+      invSheet.getRange(rowToAdd, startCol + 3).setFormula(availableFormula);
       
     } else if (action === 'update') {
       if (targetRow === -1) return "❌ Item not found.";
-      invSheet.getRange(targetRow, startCol + stockColOffset).setValue(data.stock);
+      invSheet.getRange(targetRow, startCol + 1).setValue(data.stock);
       
     } else if (action === 'remove') {
       if (targetRow === -1) return "❌ Item not found.";
-      // Clear only the 4-column wide block so we don't delete the other category
+      // Clear the 4-column block (Name, Stock, Borrowed, Available)
       invSheet.getRange(targetRow, startCol, 1, 4).clearContent();
     }
 
-    // CRITICAL: Refresh the Forms and Colors immediately
     updateAllFormChoicesAndColors(invSheet);
-    return "✅ Success: Inventory & Forms updated!";
+    return "✅ Success: Item added";
     
   } catch (e) {
     return "❌ Error: " + e.toString();
@@ -404,7 +419,7 @@ function modifyInventory(action, data) {
 
 // Function to specifically open the Item Manager Sidebar
 function showItemManager() {
-  var html = HtmlService.createHtmlOutputFromFile('ItemManager') // Ensure your HTML file is named 'ItemManager'
+  var html = HtmlService.createHtmlOutputFromFile('ItemManager') 
     .setTitle('NCF Item Manager')
     .setWidth(300);
   SpreadsheetApp.getUi().showSidebar(html);
