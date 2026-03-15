@@ -164,25 +164,28 @@ function updateAllFormChoicesAndColors(invSheet) {
   var now = new Date();
   now.setHours(0, 0, 0, 0);
 
-  // --- 1. Process Equipment (A-D) ---
-  var eqData = invSheet.getRange(11, 1, lastRow - 10, 4).getValues();
-  var currentEqRoom = "General"; // Default if no room is found yet
+  // --- 1. Process Equipment (A-E) ---
+  // Range: Col A to E (5 columns)
+  var eqData = invSheet.getRange(11, 1, lastRow - 10, 5).getValues();
+  var currentEqRoom = "General"; 
 
   eqData.forEach(function (row, i) {
     var itemName = row[0] ? row[0].toString().trim() : "";
     if (itemName === "") return;
 
     if (itemName.toLowerCase().includes("room")) {
-      currentEqRoom = itemName; // Update the current room (e.g., "Room 301")
+      currentEqRoom = itemName; 
     } else {
       var label = "[" + currentEqRoom + "] " + itemName + (row[3] > 0 ? " (" + row[3] + " available)" : " (OUT OF STOCK)");
       eqChoices.push(label);
-      invSheet.getRange(i + 11, 1, 1, 4).setBackground(row[3] <= 3 ? "#ff9999" : null);
+      // Highlight A-D based on Available Unit (Col D / Index 3)
+      invSheet.getRange(i + 11, 1, 1, 5).setBackground(row[3] <= 3 ? "#ff9999" : null);
     }
   });
 
-  // --- 2. Process Consumables (F-J) ---
-  var consData = invSheet.getRange(11, 6, lastRow - 10, 5).getValues();
+  // --- 2. Process Consumables (G-L) ---
+  // Range: Col G to L (6 columns). G=0, H=1, I=2, J=3, K=4, L=5
+  var consData = invSheet.getRange(11, 7, lastRow - 10, 6).getValues();
   var currentConsRoom = "General";
 
   consData.forEach(function (row, i) {
@@ -196,32 +199,31 @@ function updateAllFormChoicesAndColors(invSheet) {
       consChoices.push(label);
 
       var currentRow = i + 11;
-      var expiryDate = row[4] instanceof Date ? new Date(row[4]) : null;
-      var expiryCell = invSheet.getRange(currentRow, 10);
+      // Expiry Date is in Column L (Index 5 of this range)
+      var expiryDate = row[5] instanceof Date ? new Date(row[5]) : null;
+      var expiryCell = invSheet.getRange(currentRow, 12); // Column L is 12
       var expiryColor = null;
 
       if (expiryDate) {
         expiryDate.setHours(0, 0, 0, 0);
         var diffInMs = expiryDate.getTime() - now.getTime();
         var diffInDays = Math.ceil(diffInMs / (1000 * 60 * 60 * 24));
-        if (diffInDays < 0) expiryColor = "#ff4d4d";
-        else if (diffInDays === 0) expiryColor = "#ffa500";
-        else if (diffInDays <= 30) expiryColor = "#ffff00";
+        if (diffInDays < 0) expiryColor = "#ff4d4d"; // Expired (Red)
+        else if (diffInDays === 0) expiryColor = "#ffa500"; // Today (Orange)
+        else if (diffInDays <= 30) expiryColor = "#ffff00"; // Within 30 days (Yellow)
       }
       expiryCell.setBackground(expiryColor);
 
-      if (row[3] <= 3 || row[3] === "OUT OF STOCK") {
-        invSheet.getRange(currentRow, 6, 1, 4).setBackground("#ff9999");
+      // Highlight G-J based on Available Unit (Col J / Index 3)
+      if (row[3] <= 3) {
+        invSheet.getRange(currentRow, 7, 1, 5).setBackground("#ff9999");
       } else {
-        invSheet.getRange(currentRow, 6, 1, 4).setBackground(null);
+        invSheet.getRange(currentRow, 7, 1, 5).setBackground(null);
       }
     }
   });
 
-  // 3. Create Return List 
   var allChoices = [...new Set(eqChoices.concat(consChoices))];
-
-  // 4. Update Forms
   if (eqChoices.length > 0) formEq.getItems(FormApp.ItemType.MULTIPLE_CHOICE)[0].asMultipleChoiceItem().setChoiceValues([...new Set(eqChoices)]);
   if (consChoices.length > 0) formCons.getItems(FormApp.ItemType.MULTIPLE_CHOICE)[0].asMultipleChoiceItem().setChoiceValues([...new Set(consChoices)]);
   if (allChoices.length > 0) formRet.getItems(FormApp.ItemType.MULTIPLE_CHOICE)[0].asMultipleChoiceItem().setChoiceValues(allChoices);
@@ -347,70 +349,95 @@ function modifyInventory(action, data) {
   const invSheet = ss.getSheetByName("Inventory");
   
   const isEq = data.type.includes("Equipment");
-  const startCol = isEq ? 1 : 6; // Column A for Eq, Column F for Consumables
+  const startCol = isEq ? 1 : 7; // A (1) or G (7)
   const lastRow = invSheet.getLastRow();
   
-  const range = invSheet.getRange(11, startCol, Math.max(lastRow - 10, 1), 2); 
-  const values = range.getValues();
-  
-  let targetRow = -1;
+  // 1. GLOBAL DUPLICATE CHECK
+  const fullRange = invSheet.getRange(11, startCol, Math.max(lastRow - 10, 1), 1).getValues();
   const searchName = data.name.trim().toLowerCase();
+  let existingRow = -1;
 
-  for (let i = 0; i < values.length; i++) {
-    if (values[i][0].toString().toLowerCase().trim() === searchName) {
-      targetRow = i + 11;
+  for (let i = 0; i < fullRange.length; i++) {
+    if (fullRange[i][0].toString().toLowerCase().trim() === searchName) {
+      existingRow = i + 11;
       break;
     }
   }
 
   try {
     if (action === 'add') {
-      if (targetRow !== -1) return "⚠️ Item already exists!";
+      if (existingRow !== -1) return "⚠️ Item already exists in row " + existingRow;
+      if (!data.room) return "❌ Error: Please select a Room.";
+
+      // 2. FIND THE ROOM HEADER
+      let roomRow = -1;
+      const roomSearch = data.room.trim().toLowerCase();
+      const nameColValues = invSheet.getRange(1, startCol, lastRow, 1).getValues();
       
-      let rowToAdd = 11;
-      // Skip cells that are not empty OR contain "Room"
-      while (invSheet.getRange(rowToAdd, startCol).getValue() !== "" || 
-             invSheet.getRange(rowToAdd, startCol).getValue().toString().toLowerCase().includes("room")) {
-        rowToAdd++;
-        if (rowToAdd > 2000) break; 
+      for (let r = 0; r < nameColValues.length; r++) {
+        if (nameColValues[r][0].toString().toLowerCase().includes(roomSearch)) {
+          roomRow = r + 1;
+          break;
+        }
       }
-      
-      // 1. Set Item Name and Stock
+
+      if (roomRow === -1) return "❌ Error: Header '" + data.room + "' not found on sheet.";
+
+      // 3. FIND FIRST EMPTY ROW UNDER THAT ROOM
+      let rowToAdd = roomRow + 1;
+      while (invSheet.getRange(rowToAdd, startCol).getValue() !== "") {
+        // If we hit another Room header, we must insert a row to avoid overwriting it
+        if (invSheet.getRange(rowToAdd, startCol).getValue().toString().toLowerCase().includes("room")) {
+          invSheet.insertRowBefore(rowToAdd);
+          break; 
+        }
+        rowToAdd++;
+        if (rowToAdd > 3000) break; 
+      }
+
+      // 4. SET DATA & FORMULAS
+      // Name and Stock
       invSheet.getRange(rowToAdd, startCol).setValue(data.name);
       invSheet.getRange(rowToAdd, startCol + 1).setValue(data.stock);
       
-      // 2. Apply the Log-based Formulas
-      var borrowedFormula = "";
-      var availableFormula = "";
-
+      // Shelf (Eq) or Unit (Consumables)
       if (isEq) {
-        // EQUIPMENT FORMULAS (Columns C and D)
-        borrowedFormula = '=SUMIF(Logs!$B$4:$B$991, A' + rowToAdd + ' & "*", Logs!$A$4:$A$991) - SUMIF(Logs!$L$4:$L$991, A' + rowToAdd + ' & "*", Logs!$K$4:$K$991)';
-        // Col D: Available (B - C)
-        availableFormula = '=B' + rowToAdd + '- C' + rowToAdd;
+        invSheet.getRange(rowToAdd, 5).setValue(data.shelf); // Column E
       } else {
-        // CONSUMABLES FORMULAS (Columns H and I)
-        borrowedFormula = '=SUMIF(Logs!$V$4:$V$991, F' + rowToAdd + ' & "*", Logs!$U$4:$U$991) - SUMIF(Logs!$L$4:$L$991, F' + rowToAdd + ' & "*", Logs!$K$4:$K$991)';
-        // Col I: Available (G - H)
-        availableFormula = '=G' + rowToAdd + '- H' + rowToAdd;
+        invSheet.getRange(rowToAdd, 11).setValue(data.unit); // Column K
       }
 
-      // Set the formulas into the sheet
+      // Formulas
+      var borrowedFormula = isEq ? 
+        '=SUMIF(Logs!$B$4:$B$991, A' + rowToAdd + ' & "*", Logs!$A$4:$A$991) - SUMIF(Logs!$L$4:$L$991, A' + rowToAdd + ' & "*", Logs!$K$4:$K$991)' : 
+        '=SUMIF(Logs!$V$4:$V$991, G' + rowToAdd + ' & "*", Logs!$U$4:$U$991) - SUMIF(Logs!$L$4:$L$991, G' + rowToAdd + ' & "*", Logs!$K$4:$K$991)';
+      
+      var availableFormula = isEq ? '=B' + rowToAdd + '- C' + rowToAdd : '=H' + rowToAdd + '- I' + rowToAdd;
+
       invSheet.getRange(rowToAdd, startCol + 2).setFormula(borrowedFormula);
       invSheet.getRange(rowToAdd, startCol + 3).setFormula(availableFormula);
-      
+      updateAllFormChoicesAndColors(invSheet);
+      return "✅ Success: Added to " + data.room;
+
     } else if (action === 'update') {
-      if (targetRow === -1) return "❌ Item not found.";
-      invSheet.getRange(targetRow, startCol + 1).setValue(data.stock);
+      if (existingRow === -1) return "❌ Item not found.";
+      invSheet.getRange(existingRow, startCol + 1).setValue(data.stock);
+      // Update Shelf/Unit during update too
+      if (isEq) invSheet.getRange(existingRow, 5).setValue(data.shelf);
+      else invSheet.getRange(existingRow, 11).setValue(data.unit);
+      updateAllFormChoicesAndColors(invSheet);
       
+      return "✅ Update Successful!";
+
     } else if (action === 'remove') {
-      if (targetRow === -1) return "❌ Item not found.";
-      // Clear the 4-column block (Name, Stock, Borrowed, Available)
-      invSheet.getRange(targetRow, startCol, 1, 4).clearContent();
+      if (existingRow === -1) return "❌ Item not found.";
+      invSheet.getRange(existingRow, startCol, 1, (isEq ? 5 : 6)).clearContent();
+      invSheet.getRange(existingRow, startCol, 1, 5).setBackground(null);
+        updateAllFormChoicesAndColors(invSheet);
+      return "✅ Item Removed.";
     }
 
     updateAllFormChoicesAndColors(invSheet);
-    return "✅ Success: Item added";
     
   } catch (e) {
     return "❌ Error: " + e.toString();
