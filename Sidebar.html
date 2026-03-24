@@ -23,9 +23,12 @@
     <input type="email" id="emailIn" placeholder="Email Address">
     <select id="dept">
         <option value="" disabled selected>Select Department</option>
-        <option value="IT">IT</option>
-        <option value="Admin">Admin</option>
-        <option value="Nursing">Nursing</option>
+        <option value="ACT">ACT</option>
+        <option value="BSA">BSA</option>
+        <option value="BSED">BSED</option>
+        <option value="BEED">BEED</option>
+        <option value="BSAIS">BSAIS</option>
+        <option value="BSCPE">BSCPE</option>
     </select>
     <input type="text" id="contact" placeholder="Contact Number">
     <button class="btn-in" onclick="handleIn()">CLOCK IN</button>
@@ -73,13 +76,23 @@
 
       google.script.run
         .withSuccessHandler(msg => {
-          showStatus(msg, msg.includes('✅') || msg.includes('👋') ? "#d4edda" : "#f8d7da");
+          status.innerText = msg;
+          status.style.background = msg.includes('✅') ? "#d4edda" : "#f8d7da";
           
-          if(msg.includes('✅') || msg.includes('👋')) {
-            document.querySelectorAll('input').forEach(i => i.value = "");
-            if (typeof loadHistory === "function") loadHistory(); 
+          // Reset fields on success
+          if (msg.includes('✅')) {
+            document.getElementById('name').value = "";
+            document.getElementById('email').value = "";
+            document.getElementById('contact').value = "";
+            document.getElementById('emailOut').value = "";
+            
+            // RESET THE DEPARTMENT DROPDOWN
+            // This sets the dropdown back to the first option (e.g., "Admin")
+            document.querySelector('select').selectedIndex = 0; 
           }
         })
+
+      google.script.run
         .withFailureHandler(err => {
           showStatus("🚨 SCRIPT ERROR: " + err.message, "#f8d7da");
           console.error(err);

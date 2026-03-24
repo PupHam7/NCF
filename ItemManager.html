@@ -18,6 +18,15 @@
 
   <div class="card">
     <h3>📦 Item Manager</h3>
+    <label>Target Room:</label>
+      <select id="room">
+        <option value="Room 301">Room 301</option>
+        <option value="Room 302">Room 302</option>
+        <option value="Room 303">Room 303</option>
+        <option value="Room 304">Room 304</option>
+      </select>
+
+
     <label>CATEGORY</label>
     <select id="type">
       <option value="Equipment">Equipment </option>
@@ -29,6 +38,11 @@
     
     <label>STOCK QUANTITY</label>
     <input type="number" id="itemStock" placeholder="Enter number">
+
+      <div id="extraFieldArea">
+        <label id="extraLabel">Shelf:</label>
+        <input type="text" id="extraValue" placeholder="e.g. Shelf A-1">
+      </div>
     
     <button class="btn-add" onclick="run('add')">ADD NEW ITEM</button>
     <button class="btn-update" onclick="run('update')">UPDATE STOCK LEVEL</button>
@@ -37,32 +51,55 @@
 
   <div id="status"></div>
 
-  <script>
-    function run(action) {
-      const status = document.getElementById('status');
-      const data = {
-        type: document.getElementById('type').value,
-        name: document.getElementById('itemName').value,
-        stock: document.getElementById('itemStock').value
-      };
+<script>
+  // This listener changes the label from "Shelf" to "Unit" based on selection
+  document.getElementById('type').addEventListener('change', function() {
+    var label = this.value === 'Equipment' ? 'Shelf:' : 'Unit:';
+    document.getElementById('extraLabel').innerText = label;
+  });
 
-      if (!data.name && action !== 'add') return;
-      
-      status.style.display = "block";
-      status.style.background = "#eee";
-      status.innerText = "Processing...";
+function run(action) {
+  const status = document.getElementById('status');
+  const stockInput = document.getElementById('itemStock').value; // Get stock value
+  
+  const data = {
+    room: document.getElementById('room').value,
+    type: document.getElementById('type').value,
+    name: document.getElementById('itemName').value,
+    stock: stockInput,
+    shelf: document.getElementById('extraValue').value,
+    unit: document.getElementById('extraValue').value
+  };
 
-      google.script.run
-        .withSuccessHandler(msg => {
-          status.innerText = msg;
-          status.style.background = msg.includes('✅') ? "#d4edda" : "#f8d7da";
-          if (msg.includes('✅')) {
-            document.getElementById('itemName').value = "";
-            document.getElementById('itemStock').value = "";
-          }
-        })
-        .modifyInventory(action, data);
-    }
-  </script>
+  // ERROR PREVENTION: Check for Item Name
+  if (!data.name) {
+    alert("⚠️ Please enter an Item Name.");
+    return;
+  }
+
+  // ERROR PREVENTION: Check for empty Stock on Add or Update
+  if ((action === 'add' || action === 'update') && stockInput === "") {
+    alert("⚠️ Please enter a Stock Quantity.");
+    return;
+  }
+
+  status.style.display = "block";
+  status.style.background = "#eee";
+  status.innerText = "Processing...";
+
+    // Send directly to the .gs function
+    google.script.run
+      .withSuccessHandler(msg => {
+        status.innerText = msg;
+        status.style.background = msg.includes('✅') ? "#d4edda" : "#f8d7da";
+        if (msg.includes('✅')) {
+          document.getElementById('itemName').value = "";
+          document.getElementById('itemStock').value = "";
+          document.getElementById('extraValue').value = "";
+        }
+      })
+      .modifyInventory(action, data);
+  }
+</script>
 </body>
 </html>
