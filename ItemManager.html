@@ -3,108 +3,103 @@
 <head>
   <base target="_top">
   <style>
-    body { font-family: sans-serif; padding: 15px; background-color: #f8f9fa; }
-    .header-box { background: #34495e; color: white; padding: 15px; border-radius: 8px; text-align: center; margin-bottom: 20px; }
-    .section-card { background: white; border: 1px solid #ddd; border-radius: 8px; padding: 15px; margin-bottom: 20px; }
-    input, select, button { width: 100%; padding: 10px; margin-bottom: 12px; border-radius: 5px; border: 1px solid #ccc; box-sizing: border-box; }
-    button { font-weight: bold; cursor: pointer; color: white; }
-    .btn-in { background-color: #27ae60; }
-    .btn-out { background-color: #e67e22; }
-    #status { text-align: center; padding: 10px; border-radius: 4px; font-size: 13px; }
+    body { font-family: sans-serif; padding: 15px; background: #f4f4f9; }
+    .card { background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 15px; }
+    h3 { margin-top: 0; color: #2c3e50; font-size: 16px; border-bottom: 2px solid #3498db; padding-bottom: 5px; }
+    label { font-size: 12px; font-weight: bold; color: #7f8c8d; }
+    input, select, button { width: 100%; padding: 10px; margin: 8px 0; border-radius: 4px; border: 1px solid #ddd; box-sizing: border-box; }
+    .btn-add { background: #27ae60; color: white; border: none; cursor: pointer; }
+    .btn-update { background: #2980b9; color: white; border: none; cursor: pointer; }
+    .btn-remove { background: #c0392b; color: white; border: none; cursor: pointer; }
+    #status { padding: 10px; border-radius: 4px; font-size: 12px; text-align: center; display: none; }
   </style>
 </head>
 <body>
-  <div class="header-box">
-    <div id="clock">00:00:00 AM</div>
-  </div>
 
-  <div class="section-card">
-    <input type="text" id="name" placeholder="Full Name">
-    <input type="email" id="emailIn" placeholder="Email Address">
-    <select id="dept">
-        <option value="" disabled selected>Select Department</option>
-        <option value="ACT">ACT</option>
-        <option value="BSA">BSA</option>
-        <option value="BSED">BSED</option>
-        <option value="BEED">BEED</option>
-        <option value="BSAIS">BSAIS</option>
-        <option value="BSCPE">BSCPE</option>
+  <div class="card">
+    <h3>📦 Item Manager</h3>
+    <label>Target Room:</label>
+      <select id="room">
+        <option value="Room 301">Room 301</option>
+        <option value="Room 302">Room 302</option>
+        <option value="Room 303">Room 303</option>
+        <option value="Room 304">Room 304</option>
+      </select>
+
+
+    <label>CATEGORY</label>
+    <select id="type">
+      <option value="Equipment">Equipment </option>
+      <option value="Consumables">Consumables </option>
     </select>
-    <input type="text" id="contact" placeholder="Contact Number">
-    <button class="btn-in" onclick="handleIn()">CLOCK IN</button>
-  </div>
+    
+    <label>ITEM NAME</label>
+    <input type="text" id="itemName" placeholder="e.g., Stethoscope">
+    
+    <label>STOCK QUANTITY</label>
+    <input type="number" id="itemStock" placeholder="Enter number">
 
-  <div class="section-card">
-    <input type="email" id="emailOut" placeholder="Email (Clock Out)">
-    <button class="btn-out" onclick="handleOut()">CLOCK OUT</button>
+      <div id="extraFieldArea">
+        <label id="extraLabel">Shelf:</label>
+        <input type="text" id="extraValue" placeholder="e.g. Shelf A-1">
+      </div>
+    
+    <button class="btn-add" onclick="run('add')">ADD NEW ITEM</button>
+    <button class="btn-update" onclick="run('update')">UPDATE STOCK LEVEL</button>
+    <button class="btn-remove" onclick="run('remove')">REMOVE ITEM</button>
   </div>
 
   <div id="status"></div>
 
-  <script>
-    function updateClock() {
-      document.getElementById('clock').innerText = new Date().toLocaleTimeString();
-    }
-    setInterval(updateClock, 1000);
-    updateClock();
+<script>
+  // This listener changes the label from "Shelf" to "Unit" based on selection
+  document.getElementById('type').addEventListener('change', function() {
+    var label = this.value === 'Equipment' ? 'Shelf:' : 'Unit:';
+    document.getElementById('extraLabel').innerText = label;
+  });
 
-    function handleIn() {
-      const data = {
-        name: document.getElementById('name').value,
-        email: document.getElementById('emailIn').value,
-        dept: document.getElementById('dept').value,
-        contact: document.getElementById('contact').value
-      };
-      if(!data.name || !data.email || !data.dept) {
-        showStatus("⚠️ Please fill in all fields", "#fce4e4");
-        return;
-      }
-      process('in', data);
-    }
+function run(action) {
+  const status = document.getElementById('status');
+  const stockInput = document.getElementById('itemStock').value; // Get stock value
+  
+  const data = {
+    room: document.getElementById('room').value,
+    type: document.getElementById('type').value,
+    name: document.getElementById('itemName').value,
+    stock: stockInput,
+    shelf: document.getElementById('extraValue').value,
+    unit: document.getElementById('extraValue').value
+  };
 
-    function handleOut() {
-      const email = document.getElementById('emailOut').value;
-      if(!email) {
-        showStatus("⚠️ Please enter your email", "#fce4e4");
-        return;
-      }
-      process('out', { email: email });
-    }
+  // ERROR PREVENTION: Check for Item Name
+  if (!data.name) {
+    alert("⚠️ Please enter an Item Name.");
+    return;
+  }
 
-    function process(type, data) {
-      showStatus("Processing...", "#eee");
+  // ERROR PREVENTION: Check for empty Stock on Add or Update
+  if ((action === 'add' || action === 'update') && stockInput === "") {
+    alert("⚠️ Please enter a Stock Quantity.");
+    return;
+  }
 
-      google.script.run
-        .withSuccessHandler(msg => {
-          status.innerText = msg;
-          status.style.background = msg.includes('✅') ? "#d4edda" : "#f8d7da";
-          
-          // Reset fields on success
-          if (msg.includes('✅')) {
-            document.getElementById('name').value = "";
-            document.getElementById('email').value = "";
-            document.getElementById('contact').value = "";
-            document.getElementById('emailOut').value = "";
-            
-            // RESET THE DEPARTMENT DROPDOWN
-            // This sets the dropdown back to the first option (e.g., "Admin")
-            document.querySelector('select').selectedIndex = 0; 
-          }
-        })
+  status.style.display = "block";
+  status.style.background = "#eee";
+  status.innerText = "Processing...";
 
-      google.script.run
-        .withFailureHandler(err => {
-          showStatus("🚨 SCRIPT ERROR: " + err.message, "#f8d7da");
-          console.error(err);
-        })
-        .handleAttendance(data, type);
-    }
-
-    function showStatus(msg, color) {
-      const s = document.getElementById('status');
-      s.innerText = msg;
-      s.style.backgroundColor = color;
-    }
-  </script>
+    // Send directly to the .gs function
+    google.script.run
+      .withSuccessHandler(msg => {
+        status.innerText = msg;
+        status.style.background = msg.includes('✅') ? "#d4edda" : "#f8d7da";
+        if (msg.includes('✅')) {
+          document.getElementById('itemName').value = "";
+          document.getElementById('itemStock').value = "";
+          document.getElementById('extraValue').value = "";
+        }
+      })
+      .modifyInventory(action, data);
+  }
+</script>
 </body>
 </html>
