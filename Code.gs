@@ -487,3 +487,240 @@ function showItemManager() {
     .setWidth(300);
   SpreadsheetApp.getUi().showSidebar(html);
 }
+
+
+// Function to Email a Monthly Report
+function updateMonthlyEquipmentBorrowing() {
+const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const logSheet = ss.getSheetByName("Logs");
+  const reportSheet = ss.getSheetByName("Monthly Report");
+  
+  const now = new Date();
+  const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+  const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+
+  const lastLogRow = logSheet.getLastRow();
+  if (lastLogRow < 4) return;
+  
+  // Data from Logs: Col B (Item), Col C (Timestamp)
+  const logData = logSheet.getRange(4, 2, lastLogRow - 3, 2).getValues(); 
+  let equipmentCounts = {};
+
+  logData.forEach(row => {
+    let rawName = row[0];
+    const timestamp = row[1];
+
+    if (timestamp instanceof Date && timestamp >= firstDay && timestamp <= lastDay && rawName) {
+      
+      // CLEANING LOGIC:
+      // 1. Remove [Room XXX] prefix
+      // 2. Remove (X available) suffix
+      // 3. Trim whitespace
+      let cleanName = rawName
+        .replace(/\[.*?\]/g, "")    // Removes anything inside [ ]
+        .replace(/\(.*?\)/g, "")    // Removes anything inside ( )
+        .trim();                    // Removes leftover spaces
+      
+      if (cleanName) {
+        equipmentCounts[cleanName] = (equipmentCounts[cleanName] || 0) + 1;
+      }
+    }
+  });
+
+  let output = [];
+  for (let item in equipmentCounts) {
+    output.push([item, equipmentCounts[item]]);
+  }
+
+  // Clear range A7:B to the bottom of the data
+  if (reportSheet.getLastRow() >= 7) {
+    reportSheet.getRange(7, 1, reportSheet.getLastRow() - 6, 2).clearContent();
+  }
+
+  if (output.length > 0) {
+    output.sort((a, b) => b[1] - a[1]);
+    reportSheet.getRange(7, 1, output.length, 2).setValues(output);
+  }
+
+  ss.toast("Equipment list cleaned and updated!");
+}
+
+function updateMonthlyConsumables() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const logSheet = ss.getSheetByName("Logs");
+  const reportSheet = ss.getSheetByName("Monthly Report");
+  
+  const now = new Date();
+  const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+  const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+
+  const lastLogRow = logSheet.getLastRow();
+  if (lastLogRow < 4) return;
+  
+  // Data from Logs: 
+  // Col U (Qty) = Index 20
+  // Col V (Item) = Index 21
+  // Col W (Timestamp) = Index 22
+  const logData = logSheet.getRange(4, 21, lastLogRow - 3, 3).getValues(); 
+  let consumableTotals = {};
+
+  logData.forEach(row => {
+    let qty = parseFloat(row[0]) || 0; // Column U
+    let rawName = row[1];              // Column V
+    const timestamp = row[2];          // Column W
+
+    if (timestamp instanceof Date && timestamp >= firstDay && timestamp <= lastDay && rawName) {
+      
+      // CLEANING LOGIC
+      let cleanName = rawName
+        .replace(/\[.*?\]/g, "")    
+        .replace(/\(.*?\)/g, "")    
+        .trim();                    
+      
+      if (cleanName) {
+        // We add the actual quantity from Col U instead of just +1
+        consumableTotals[cleanName] = (consumableTotals[cleanName] || 0) + qty;
+      }
+    }
+  });
+
+  let output = [];
+  for (let item in consumableTotals) {
+    output.push([item, consumableTotals[item]]);
+  }
+
+  // Clear old data in C7:D
+  if (reportSheet.getLastRow() >= 7) {
+    reportSheet.getRange(7, 3, reportSheet.getLastRow() - 6, 2).clearContent();
+  }
+
+  // Write new data starting at C7
+  if (output.length > 0) {
+    output.sort((a, b) => b[1] - a[1]); 
+    reportSheet.getRange(7, 3, output.length, 2).setValues(output);
+  }
+
+  ss.toast("Consumables updated with actual quantities!");
+}
+
+function consolidateInstructorsForFormatting() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const logSheet = ss.getSheetByName("Logs");
+  const formatSheet = ss.getSheetByName("For formatting");
+  
+  // 1. Setup Timeframe (Current Month)
+  const now = new Date();
+  const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+  const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+
+  // 2. Define the Column Indices for Instructors and Timestamps
+  // Borrowing: Instructor Col G (6), Timestamp Col C (2)
+  // Returning: Instructor Col Q (16), Timestamp Col M (12)
+  // Consumables: Instructor Col AA (26), Timestamp Col W (22)
+  
+  const lastRow = logSheet.getLastRow();
+  if (lastRow < 4) return;
+  const data = logSheet.getRange(4, 1, lastRow - 3, 27).getValues(); 
+  
+  let instructorList = [];
+
+  // 3. Extract names from all three sections
+  data.forEach(row => {
+    // Section 1: Borrowing
+    if (isValidEntry(row[2], firstDay, lastDay) && row[6]) instructorList.push([row[6]]);
+    
+    // Section 2: Returning
+    if (isValidEntry(row[12], firstDay, lastDay) && row[16]) instructorList.push([row[16]]);
+    
+    // Section 3: Consumables
+    if (isValidEntry(row[22], firstDay, lastDay) && row[26]) instructorList.push([row[26]]);
+  });
+
+  // 4. Update the "For formatting" sheet
+  formatSheet.clearContents(); // Clear old data
+  if (instructorList.length > 0) {
+    formatSheet.getRange(1, 1, instructorList.length, 1).setValues(instructorList);
+  }
+
+  ss.toast("Instructors consolidated to 'For formatting' sheet!");
+}
+
+// Helper function to check if the date is within the current month
+function isValidEntry(dateVal, start, end) {
+  return (dateVal instanceof Date && dateVal >= start && dateVal <= end);
+}
+
+function categorizeReturnedItems() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const inventorySheet = ss.getSheetByName("Inventory");
+  const logSheet = ss.getSheetByName("Logs");
+  const formatSheet = ss.getSheetByName("For formatting");
+
+  // 1. Map out the Inventory by Section
+  let itemCategoryMap = {};
+
+  // Get Equipment from Columns A-B (Rows 12 down)
+  const equipInv = inventorySheet.getRange(12, 1, inventorySheet.getLastRow() - 11, 2).getValues();
+  equipInv.forEach(row => {
+    if (row[0]) {
+      let cleanName = row[0].toString().toLowerCase().trim();
+      itemCategoryMap[cleanName] = "equipment";
+    }
+  });
+
+  // Get Consumables from Columns G-H (Rows 12 down)
+  const consInv = inventorySheet.getRange(12, 7, inventorySheet.getLastRow() - 11, 2).getValues();
+  consInv.forEach(row => {
+    if (row[0]) {
+      let cleanName = row[0].toString().toLowerCase().trim();
+      itemCategoryMap[cleanName] = "consumable";
+    }
+  });
+
+  // 2. Setup Timeframe (Current Month)
+  const now = new Date();
+  const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+  const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+
+  // 3. Get Returning Data from Logs
+  // Col L = Item (Index 11), Col M = Timestamp (Index 12)
+  const lastLogRow = logSheet.getLastRow();
+  if (lastLogRow < 4) return;
+  const returningEntries = logSheet.getRange(4, 12, lastLogRow - 3, 2).getValues();
+
+  let returnedEquip = [];
+  let returnedConsumables = [];
+
+  // 4. Sort based on Inventory Sections
+  returningEntries.forEach(row => {
+    let rawName = row[0];
+    let timestamp = row[1];
+
+    if (timestamp instanceof Date && timestamp >= firstDay && timestamp <= lastDay && rawName) {
+      // Clean the log name for matching
+      let cleanLogName = rawName.replace(/\[.*?\]/g, "").replace(/\(.*?\)/g, "").trim().toLowerCase();
+      
+      let category = itemCategoryMap[cleanLogName];
+
+      if (category === "equipment") {
+        returnedEquip.push([cleanLogName.toUpperCase()]);
+      } else if (category === "consumable") {
+        returnedConsumables.push([cleanLogName.toUpperCase()]);
+      }
+    }
+  });
+
+  // 5. Output to "For formatting"
+  // Clear Columns C and D
+  formatSheet.getRange("C:D").clearContent();
+
+  if (returnedEquip.length > 0) {
+    formatSheet.getRange(1, 3, returnedEquip.length, 1).setValues(returnedEquip);
+  }
+  
+  if (returnedConsumables.length > 0) {
+    formatSheet.getRange(1, 4, returnedConsumables.length, 1).setValues(returnedConsumables);
+  }
+
+  ss.toast("Returns separated: " + returnedEquip.length + " Equip, " + returnedConsumables.length + " Consumables.");
+}
