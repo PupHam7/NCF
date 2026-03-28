@@ -167,14 +167,14 @@ function updateAllFormChoicesAndColors(invSheet) {
   // --- 1. Process Equipment (A-E) ---
   // Range: Col A to E (5 columns)
   var eqData = invSheet.getRange(11, 1, lastRow - 10, 5).getValues();
-  var currentEqRoom = "General";
+  var currentEqRoom = "General"; 
 
   eqData.forEach(function (row, i) {
     var itemName = row[0] ? row[0].toString().trim() : "";
     if (itemName === "") return;
 
     if (itemName.toLowerCase().includes("room")) {
-      currentEqRoom = itemName;
+      currentEqRoom = itemName; 
     } else {
       var label = "[" + currentEqRoom + "] " + itemName + (row[3] > 0 ? " (" + row[3] + " available)" : " (OUT OF STOCK)");
       eqChoices.push(label);
@@ -223,7 +223,10 @@ function updateAllFormChoicesAndColors(invSheet) {
     }
   });
 
+
   var allChoices = [...new Set(eqChoices.concat(consChoices))];
+
+
   if (eqChoices.length > 0) formEq.getItems(FormApp.ItemType.MULTIPLE_CHOICE)[0].asMultipleChoiceItem().setChoiceValues([...new Set(eqChoices)]);
   if (consChoices.length > 0) formCons.getItems(FormApp.ItemType.MULTIPLE_CHOICE)[0].asMultipleChoiceItem().setChoiceValues([...new Set(consChoices)]);
   if (allChoices.length > 0) formRet.getItems(FormApp.ItemType.MULTIPLE_CHOICE)[0].asMultipleChoiceItem().setChoiceValues(allChoices);
@@ -345,144 +348,120 @@ function refreshInventory() {
 
 
 function modifyInventory(action, data) {
-  const ui = SpreadsheetApp.getUi();
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const invSheet = ss.getSheetByName("Inventory");
 
   const isEq = data.type.includes("Equipment");
-  const startCol = isEq ? 1 : 7; // Column A (1) or G (7)
+  const startCol = isEq ? 1 : 7; // A (1) or G (7)
   const lastRow = invSheet.getLastRow();
+
+  // 1. GLOBAL DUPLICATE CHECK
+  const fullRange = invSheet.getRange(11, startCol, Math.max(lastRow - 10, 1), 1).getValues();
+
+
   const searchName = data.name.trim().toLowerCase();
-  const targetRoom = data.room ? data.room.trim().toLowerCase() : "";
+  let existingRow = -1;
 
-  // 1. FIND THE ROOM BOUNDARIES
-  let roomStartRow = -1;
-  let roomEndRow = lastRow;
-  const nameColValues = invSheet.getRange(1, startCol, lastRow, 1).getValues();
-
-  for (let r = 0; r < nameColValues.length; r++) {
-    let cellValue = nameColValues[r][0].toString().toLowerCase();
-    if (cellValue.includes(targetRoom) && targetRoom !== "") {
-      roomStartRow = r + 1;
-      // Find where this room section ends (at the next "Room" header or end of sheet)
-      for (let next = r + 1; next < nameColValues.length; next++) {
-        if (nameColValues[next][0].toString().toLowerCase().includes("room")) {
-          roomEndRow = next;
-          break;
-        }
-      }
+  for (let i = 0; i < fullRange.length; i++) {
+    if (fullRange[i][0].toString().toLowerCase().trim() === searchName) {
+      existingRow = i + 11;
       break;
     }
   }
 
-  // 2. FIND THE ITEM ONLY WITHIN THE SELECTED ROOM
-  let existingRow = -1;
-  if (roomStartRow !== -1) {
-    for (let k = roomStartRow; k <= roomEndRow; k++) {
-      let currentItemName = invSheet.getRange(k, startCol).getValue().toString().toLowerCase().trim();
-      if (currentItemName === searchName) {
-        existingRow = k;
-        break;
-      }
-    }
-  }
-
-  // 3. NATIVE UI CONFIRMATIONS (Standardized to match CI Search)
-  if (action === 'add') {
-    const response = ui.alert('Confirm Addition', 'Add "' + data.name + '" to ' + data.room + '?', ui.ButtonSet.YES_NO);
-    if (response !== ui.Button.YES) return "❌ Action cancelled.";
-  }
-
-  if (action === 'remove' || action === 'update') {
-    // ERROR: If room selection doesn't match item location
-    if (existingRow === -1) {
-      return "❌ Error: '" + data.name + "' not found in " + data.room + ".";
-    }
-
-    const confirmMsg = action === 'remove' ?
-      '⚠️ PERMANENTLY REMOVE "' + data.name + '" from ' + data.room + '?' :
-      'Update stock for "' + data.name + '" in ' + data.room + '?';
-
-    const response = ui.alert('Confirm Action', confirmMsg, ui.ButtonSet.YES_NO);
-    if (response !== ui.Button.YES) return "❌ Action cancelled.";
-  }
-
-  // 4. PERFORM ACTIONS
   try {
     if (action === 'add') {
-      // Check for global duplicates before adding new
-      if (existingRow !== -1) return "⚠️ Item already exists in " + data.room + " at row " + existingRow;
-      if (roomStartRow === -1) return "❌ Error: Header '" + data.room + "' not found.";
+      if (existingRow !== -1) return "⚠️ Item already exists in row " + existingRow;
+      if (!data.room) return "❌ Error: Please select a Room.";
 
-      let rowToAdd = roomStartRow + 1;
-      while (invSheet.getRange(rowToAdd, startCol).getValue() !== "") {
-        if (invSheet.getRange(rowToAdd, startCol).getValue().toString().toLowerCase().includes("room")) {
-          invSheet.insertRowBefore(rowToAdd);
+      // 2. FIND THE ROOM HEADER
+      let roomRow = -1;
+      const roomSearch = data.room.trim().toLowerCase();
+      const nameColValues = invSheet.getRange(1, startCol, lastRow, 1).getValues();
+
+      for (let r = 0; r < nameColValues.length; r++) {
+        if (nameColValues[r][0].toString().toLowerCase().includes(roomSearch)) {
+          roomRow = r + 1;
           break;
         }
-        rowToAdd++;
       }
 
+      if (roomRow === -1) return "❌ Error: Header '" + data.room + "' not found on sheet.";
+
+      // 3. FIND FIRST EMPTY ROW UNDER THAT ROOM
+      let rowToAdd = roomRow + 1;
+      while (invSheet.getRange(rowToAdd, startCol).getValue() !== "") {
+        // If we hit another Room header, we must insert a row to avoid overwriting it
+        if (invSheet.getRange(rowToAdd, startCol).getValue().toString().toLowerCase().includes("room")) {
+          invSheet.insertRowBefore(rowToAdd);
+          break; 
+        }
+        rowToAdd++;
+        if (rowToAdd > 3000) break; 
+      }
+
+      // 4. SET DATA & FORMULAS
+      // Name and Stock
       invSheet.getRange(rowToAdd, startCol).setValue(data.name);
       invSheet.getRange(rowToAdd, startCol + 1).setValue(data.stock);
 
+      // Shelf (Eq) or Unit (Consumables)
+
+
+
       if (isEq) {
         invSheet.getRange(rowToAdd, 5).setValue(data.shelf); // Column E
+
+
+
       } else {
         invSheet.getRange(rowToAdd, 11).setValue(data.unit); // Column K
+
+
+
       }
 
-      // Formulas for Borrowed and Available Units
-      var borrowedFormula = isEq ?
-        '=SUMIF(Logs!$B$4:$B$991, A' + rowToAdd + ' & "*", Logs!$A$4:$A$991) - SUMIF(Logs!$L$4:$L$991, A' + rowToAdd + ' & "*", Logs!$K$4:$K$991)' :
-        '=SUMIF(Logs!$V$4:$V$991, G' + rowToAdd + ' & "*", Logs!$U$4:$U$991) - SUMIF(Logs!$L$4:$L$991, G' + rowToAdd + ' & "*", Logs!$K$4:$K$991)';
-
+      // Formulas
+      var borrowedFormula = isEq ? 
+        '=SUMIF(Logs!$B$4:$B$991, "*" & A' + rowToAdd + ' & "*", Logs!$A$4:$A$991) - SUMIF(Logs!$L$4:$L$991, "*" & A' + rowToAdd + ' & "*", Logs!$K$4:$K$991)' : 
+        '=SUMIF(Logs!$V$4:$V$991, "*" & G' + rowToAdd + ' & "*", Logs!$U$4:$U$991) - SUMIF(Logs!$L$4:$L$991, "*" & G' + rowToAdd + ' & "*", Logs!$K$4:$K$991)';
+      
       var availableFormula = isEq ? '=B' + rowToAdd + '- C' + rowToAdd : '=H' + rowToAdd + '- I' + rowToAdd;
 
       invSheet.getRange(rowToAdd, startCol + 2).setFormula(borrowedFormula);
       invSheet.getRange(rowToAdd, startCol + 3).setFormula(availableFormula);
-
       updateAllFormChoicesAndColors(invSheet);
-      return "✅ Added to " + data.room;
+      return "✅ Success: Added to " + data.room;
 
     } else if (action === 'update') {
-      if (existingRow === -1) return "❌ Error: '" + data.name + "' not found in " + data.room + ".";
-
-      // SERVER-SIDE VALIDATION
-      if (data.stock === "" || data.stock === null) {
-        return "❌ Error: Stock quantity cannot be empty.";
-      }
-
-      invSheet.getRange(existingRow, startCol + 1).setValue(data.stock); // Updates Column B or H
-
-      if (isEq) invSheet.getRange(existingRow, 5).setValue(data.shelf); // Column E
-      else invSheet.getRange(existingRow, 11).setValue(data.unit); // Column K
-
+      if (existingRow === -1) return "❌ Item not found.";
+      invSheet.getRange(existingRow, startCol + 1).setValue(data.stock);
+      // Update Shelf/Unit during update too
+      if (isEq) invSheet.getRange(existingRow, 5).setValue(data.shelf);
+      else invSheet.getRange(existingRow, 11).setValue(data.unit);
       updateAllFormChoicesAndColors(invSheet);
+
       return "✅ Update Successful!";
 
     } else if (action === 'remove') {
-      // 1. SET WIDTH: Equipment = 5 cols (A-E), Consumables = 6 cols (G-L)
-      // This prevents the script from touching the black separator in Column F
-      const width = isEq ? 5 : 6;
-
-      // 2. CLEAR CONTENT & BACKGROUND
-      // This clears ONLY the data cells and their highlights
-      invSheet.getRange(existingRow, startCol, 1, width).clearContent();
-      invSheet.getRange(existingRow, startCol, 1, width).setBackground(null);
-
-      updateAllFormChoicesAndColors(invSheet);
-      return "✅ Item Removed from " + data.room;
+      if (existingRow === -1) return "❌ Item not found.";
+      invSheet.getRange(existingRow, startCol, 1, (isEq ? 5 : 6)).clearContent();
+      invSheet.getRange(existingRow, startCol, 1, 5).setBackground(null);
+        updateAllFormChoicesAndColors(invSheet);
+      return "✅ Item Removed.";
     }
+
+    updateAllFormChoicesAndColors(invSheet);
+
 
   } catch (e) {
     return "❌ Error: " + e.toString();
   }
 }
 
-// Function to open the Item Manager Sidebar
+// Function to specifically open the Item Manager Sidebar
 function showItemManager() {
-  var html = HtmlService.createHtmlOutputFromFile('ItemManager')
+  var html = HtmlService.createHtmlOutputFromFile('ItemManager') 
     .setTitle('NCF Item Manager')
     .setWidth(300);
   SpreadsheetApp.getUi().showSidebar(html);
