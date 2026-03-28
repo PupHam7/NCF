@@ -16,6 +16,7 @@ function onOpen() {
   ui.createMenu('🔍 Search')
     .addItem('Search C.I. in Logs', 'runCISearch')
     .addToUi();
+
 }
 
 function showSidebar() {
@@ -167,14 +168,14 @@ function updateAllFormChoicesAndColors(invSheet) {
   // --- 1. Process Equipment (A-E) ---
   // Range: Col A to E (5 columns)
   var eqData = invSheet.getRange(11, 1, lastRow - 10, 5).getValues();
-  var currentEqRoom = "General";
+  var currentEqRoom = "General"; 
 
   eqData.forEach(function (row, i) {
     var itemName = row[0] ? row[0].toString().trim() : "";
     if (itemName === "") return;
 
     if (itemName.toLowerCase().includes("room")) {
-      currentEqRoom = itemName;
+      currentEqRoom = itemName; 
     } else {
       var label = "[" + currentEqRoom + "] " + itemName + (row[3] > 0 ? " (" + row[3] + " available)" : " (OUT OF STOCK)");
       eqChoices.push(label);
@@ -223,7 +224,10 @@ function updateAllFormChoicesAndColors(invSheet) {
     }
   });
 
+
   var allChoices = [...new Set(eqChoices.concat(consChoices))];
+
+
   if (eqChoices.length > 0) formEq.getItems(FormApp.ItemType.MULTIPLE_CHOICE)[0].asMultipleChoiceItem().setChoiceValues([...new Set(eqChoices)]);
   if (consChoices.length > 0) formCons.getItems(FormApp.ItemType.MULTIPLE_CHOICE)[0].asMultipleChoiceItem().setChoiceValues([...new Set(consChoices)]);
   if (allChoices.length > 0) formRet.getItems(FormApp.ItemType.MULTIPLE_CHOICE)[0].asMultipleChoiceItem().setChoiceValues(allChoices);
@@ -345,265 +349,326 @@ function refreshInventory() {
 
 
 function modifyInventory(action, data) {
-  const ui = SpreadsheetApp.getUi();
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const invSheet = ss.getSheetByName("Inventory");
 
   const isEq = data.type.includes("Equipment");
-  const startCol = isEq ? 1 : 7; // Column A (1) or G (7)
+  const startCol = isEq ? 1 : 7; // A (1) or G (7)
   const lastRow = invSheet.getLastRow();
+
+  // 1. GLOBAL DUPLICATE CHECK
+  const fullRange = invSheet.getRange(11, startCol, Math.max(lastRow - 10, 1), 1).getValues();
+
+
   const searchName = data.name.trim().toLowerCase();
-  const targetRoom = data.room ? data.room.trim().toLowerCase() : "";
+  let existingRow = -1;
 
-  // 1. FIND THE ROOM BOUNDARIES
-  let roomStartRow = -1;
-  let roomEndRow = lastRow;
-  const nameColValues = invSheet.getRange(1, startCol, lastRow, 1).getValues();
-
-  for (let r = 0; r < nameColValues.length; r++) {
-    let cellValue = nameColValues[r][0].toString().toLowerCase();
-    if (cellValue.includes(targetRoom) && targetRoom !== "") {
-      roomStartRow = r + 1;
-      // Find where this room section ends (at the next "Room" header or end of sheet)
-      for (let next = r + 1; next < nameColValues.length; next++) {
-        if (nameColValues[next][0].toString().toLowerCase().includes("room")) {
-          roomEndRow = next;
-          break;
-        }
-      }
+  for (let i = 0; i < fullRange.length; i++) {
+    if (fullRange[i][0].toString().toLowerCase().trim() === searchName) {
+      existingRow = i + 11;
       break;
     }
   }
 
-  // 2. FIND THE ITEM ONLY WITHIN THE SELECTED ROOM
-  let existingRow = -1;
-  if (roomStartRow !== -1) {
-    for (let k = roomStartRow; k <= roomEndRow; k++) {
-      let currentItemName = invSheet.getRange(k, startCol).getValue().toString().toLowerCase().trim();
-      if (currentItemName === searchName) {
-        existingRow = k;
-        break;
-      }
-    }
-  }
-
-  // 3. NATIVE UI CONFIRMATIONS (Standardized to match CI Search)
-  if (action === 'add') {
-    const response = ui.alert('Confirm Addition', 'Add "' + data.name + '" to ' + data.room + '?', ui.ButtonSet.YES_NO);
-    if (response !== ui.Button.YES) return "❌ Action cancelled.";
-  }
-
-  if (action === 'remove' || action === 'update') {
-    // ERROR: If room selection doesn't match item location
-    if (existingRow === -1) {
-      return "❌ Error: '" + data.name + "' not found in " + data.room + ".";
-    }
-
-    const confirmMsg = action === 'remove' ?
-      '⚠️ PERMANENTLY REMOVE "' + data.name + '" from ' + data.room + '?' :
-      'Update stock for "' + data.name + '" in ' + data.room + '?';
-
-    const response = ui.alert('Confirm Action', confirmMsg, ui.ButtonSet.YES_NO);
-    if (response !== ui.Button.YES) return "❌ Action cancelled.";
-  }
-
-  // 4. PERFORM ACTIONS
   try {
     if (action === 'add') {
-      // Check for global duplicates before adding new
-      if (existingRow !== -1) return "⚠️ Item already exists in " + data.room + " at row " + existingRow;
-      if (roomStartRow === -1) return "❌ Error: Header '" + data.room + "' not found.";
+      if (existingRow !== -1) return "⚠️ Item already exists in row " + existingRow;
+      if (!data.room) return "❌ Error: Please select a Room.";
 
-      let rowToAdd = roomStartRow + 1;
-      while (invSheet.getRange(rowToAdd, startCol).getValue() !== "") {
-        if (invSheet.getRange(rowToAdd, startCol).getValue().toString().toLowerCase().includes("room")) {
-          invSheet.insertRowBefore(rowToAdd);
+      // 2. FIND THE ROOM HEADER
+      let roomRow = -1;
+      const roomSearch = data.room.trim().toLowerCase();
+      const nameColValues = invSheet.getRange(1, startCol, lastRow, 1).getValues();
+
+      for (let r = 0; r < nameColValues.length; r++) {
+        if (nameColValues[r][0].toString().toLowerCase().includes(roomSearch)) {
+          roomRow = r + 1;
           break;
         }
-        rowToAdd++;
       }
 
+      if (roomRow === -1) return "❌ Error: Header '" + data.room + "' not found on sheet.";
+
+      // 3. FIND FIRST EMPTY ROW UNDER THAT ROOM
+      let rowToAdd = roomRow + 1;
+      while (invSheet.getRange(rowToAdd, startCol).getValue() !== "") {
+        // If we hit another Room header, we must insert a row to avoid overwriting it
+        if (invSheet.getRange(rowToAdd, startCol).getValue().toString().toLowerCase().includes("room")) {
+          invSheet.insertRowBefore(rowToAdd);
+          break; 
+        }
+        rowToAdd++;
+        if (rowToAdd > 3000) break; 
+      }
+
+      // 4. SET DATA & FORMULAS
+      // Name and Stock
       invSheet.getRange(rowToAdd, startCol).setValue(data.name);
       invSheet.getRange(rowToAdd, startCol + 1).setValue(data.stock);
 
+      // Shelf (Eq) or Unit (Consumables)
+
+
+
       if (isEq) {
         invSheet.getRange(rowToAdd, 5).setValue(data.shelf); // Column E
+
+
+
       } else {
         invSheet.getRange(rowToAdd, 11).setValue(data.unit); // Column K
+
+
+
       }
 
-      // Formulas for Borrowed and Available Units
-      var borrowedFormula = isEq ?
-        '=SUMIF(Logs!$B$4:$B$991, A' + rowToAdd + ' & "*", Logs!$A$4:$A$991) - SUMIF(Logs!$L$4:$L$991, A' + rowToAdd + ' & "*", Logs!$K$4:$K$991)' :
-        '=SUMIF(Logs!$V$4:$V$991, G' + rowToAdd + ' & "*", Logs!$U$4:$U$991) - SUMIF(Logs!$L$4:$L$991, G' + rowToAdd + ' & "*", Logs!$K$4:$K$991)';
-
+      // Formulas
+      var borrowedFormula = isEq ? 
+        '=SUMIF(Logs!$B$4:$B$991, "*" & A' + rowToAdd + ' & "*", Logs!$A$4:$A$991) - SUMIF(Logs!$L$4:$L$991, "*" & A' + rowToAdd + ' & "*", Logs!$K$4:$K$991)' : 
+        '=SUMIF(Logs!$V$4:$V$991, "*" & G' + rowToAdd + ' & "*", Logs!$U$4:$U$991) - SUMIF(Logs!$L$4:$L$991, "*" & G' + rowToAdd + ' & "*", Logs!$K$4:$K$991)';
+      
       var availableFormula = isEq ? '=B' + rowToAdd + '- C' + rowToAdd : '=H' + rowToAdd + '- I' + rowToAdd;
 
       invSheet.getRange(rowToAdd, startCol + 2).setFormula(borrowedFormula);
       invSheet.getRange(rowToAdd, startCol + 3).setFormula(availableFormula);
-
       updateAllFormChoicesAndColors(invSheet);
-      return "✅ Added to " + data.room;
+      return "✅ Success: Added to " + data.room;
 
     } else if (action === 'update') {
-      if (existingRow === -1) return "❌ Error: '" + data.name + "' not found in " + data.room + ".";
-
-      // SERVER-SIDE VALIDATION
-      if (data.stock === "" || data.stock === null) {
-        return "❌ Error: Stock quantity cannot be empty.";
-      }
-
-      invSheet.getRange(existingRow, startCol + 1).setValue(data.stock); // Updates Column B or H
-
-      if (isEq) invSheet.getRange(existingRow, 5).setValue(data.shelf); // Column E
-      else invSheet.getRange(existingRow, 11).setValue(data.unit); // Column K
-
+      if (existingRow === -1) return "❌ Item not found.";
+      invSheet.getRange(existingRow, startCol + 1).setValue(data.stock);
+      // Update Shelf/Unit during update too
+      if (isEq) invSheet.getRange(existingRow, 5).setValue(data.shelf);
+      else invSheet.getRange(existingRow, 11).setValue(data.unit);
       updateAllFormChoicesAndColors(invSheet);
+
       return "✅ Update Successful!";
 
     } else if (action === 'remove') {
-      // 1. SET WIDTH: Equipment = 5 cols (A-E), Consumables = 6 cols (G-L)
-      // This prevents the script from touching the black separator in Column F
-      const width = isEq ? 5 : 6;
-
-      // 2. CLEAR CONTENT & BACKGROUND
-      // This clears ONLY the data cells and their highlights
-      invSheet.getRange(existingRow, startCol, 1, width).clearContent();
-      invSheet.getRange(existingRow, startCol, 1, width).setBackground(null);
-
-      updateAllFormChoicesAndColors(invSheet);
-      return "✅ Item Removed from " + data.room;
+      if (existingRow === -1) return "❌ Item not found.";
+      invSheet.getRange(existingRow, startCol, 1, (isEq ? 5 : 6)).clearContent();
+      invSheet.getRange(existingRow, startCol, 1, 5).setBackground(null);
+        updateAllFormChoicesAndColors(invSheet);
+      return "✅ Item Removed.";
     }
+
+    updateAllFormChoicesAndColors(invSheet);
+
 
   } catch (e) {
     return "❌ Error: " + e.toString();
   }
 }
 
-// Function to open the Item Manager Sidebar
+// Function to specifically open the Item Manager Sidebar
 function showItemManager() {
-  var html = HtmlService.createHtmlOutputFromFile('ItemManager')
+  var html = HtmlService.createHtmlOutputFromFile('ItemManager') 
     .setTitle('NCF Item Manager')
     .setWidth(300);
   SpreadsheetApp.getUi().showSidebar(html);
 }
 
 
-// Function to Email a Monthly Report
-function updateMonthlyEquipmentBorrowing() {
-const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+
+
+
+
+
+
+
+
+
+
+
+function generateMonthlyEquipment() {
+  const ss = SpreadsheetApp.getActive();
   const logSheet = ss.getSheetByName("Logs");
   const reportSheet = ss.getSheetByName("Monthly Report");
   
+  // 1. Setup Date Range (Current Month)
   const now = new Date();
-  const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
-  const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0);
+  const end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
 
+  // 2. Get all Log Data
   const lastLogRow = logSheet.getLastRow();
   if (lastLogRow < 4) return;
+  const logData = logSheet.getRange(4, 1, lastLogRow - 3, 13).getValues(); 
+
+  // 3. STEP ONE: DISCOVER UNIQUE NAMES FIRST
+  let itemNamesSet = new Set();
   
-  // Data from Logs: Col B (Item), Col C (Timestamp)
-  const logData = logSheet.getRange(4, 2, lastLogRow - 3, 2).getValues(); 
-  let equipmentCounts = {};
-
   logData.forEach(row => {
-    let rawName = row[0];
-    const timestamp = row[1];
-
-    if (timestamp instanceof Date && timestamp >= firstDay && timestamp <= lastDay && rawName) {
-      
-      // CLEANING LOGIC:
-      // 1. Remove [Room XXX] prefix
-      // 2. Remove (X available) suffix
-      // 3. Trim whitespace
-      let cleanName = rawName
-        .replace(/\[.*?\]/g, "")    // Removes anything inside [ ]
-        .replace(/\(.*?\)/g, "")    // Removes anything inside ( )
-        .trim();                    // Removes leftover spaces
-      
-      if (cleanName) {
-        equipmentCounts[cleanName] = (equipmentCounts[cleanName] || 0) + 1;
-      }
+    let bItem = cleanItemName(row[1]); // Borrowing Item (Col B)
+    let bTS = row[2];                 // Borrowing TS (Col C)
+    
+    if (bItem && bTS instanceof Date && bTS >= start && bTS <= end) {
+      itemNamesSet.add(bItem);
     }
   });
 
-  let output = [];
-  for (let item in equipmentCounts) {
-    output.push([item, equipmentCounts[item]]);
+  // 4. STEP TWO: SORT NAMES ALPHABETICALLY
+  let sortedNames = Array.from(itemNamesSet).sort((a, b) => a.localeCompare(b));
+
+  // 5. STEP THREE: CALCULATE TOTALS BASED ON SORTED NAMES
+  // This ensures Index 0 of Names always matches Index 0 of Totals
+  let finalData = sortedNames.map(itemName => {
+    let borrowedTotal = 0;
+    let returnedTotal = 0;
+
+    logData.forEach(row => {
+      // Check Borrowing (Cols A, B, C)
+      if (cleanItemName(row[1]) === itemName) {
+        let bTS = row[2];
+        if (bTS instanceof Date && bTS >= start && bTS <= end) {
+          borrowedTotal += (parseFloat(row[0]) || 0);
+        }
+      }
+
+      // Check Returning (Cols K, L, M)
+      if (cleanItemName(row[11]) === itemName) {
+        let rTS = row[12];
+        if (rTS instanceof Date && rTS >= start && rTS <= end) {
+          returnedTotal += (parseFloat(row[10]) || 0);
+        }
+      }
+    });
+
+    return [itemName, borrowedTotal, returnedTotal];
+  });
+
+  // 6. WRITE TO SHEET
+  // Clear old content from B7:D
+  const lastReportRow = reportSheet.getLastRow();
+  if (lastReportRow >= 7) {
+    reportSheet.getRange(7, 2, lastReportRow - 6, 3).clearContent();
   }
 
-  // Clear range A7:B to the bottom of the data
-  if (reportSheet.getLastRow() >= 7) {
-    reportSheet.getRange(7, 1, reportSheet.getLastRow() - 6, 2).clearContent();
+  if (finalData.length > 0) {
+    reportSheet.getRange(7, 2, finalData.length, 3).setValues(finalData);
   }
-
-  if (output.length > 0) {
-    output.sort((a, b) => b[1] - a[1]);
-    reportSheet.getRange(7, 1, output.length, 2).setValues(output);
-  }
-
-  ss.toast("Equipment list cleaned and updated!");
+  
+  ss.toast("✅ Report generated: Items sorted alphabetically before calculation.");
 }
 
-function updateMonthlyConsumables() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+function generateMonthlyConsumables() {
+  const ss = SpreadsheetApp.getActive();
   const logSheet = ss.getSheetByName("Logs");
   const reportSheet = ss.getSheetByName("Monthly Report");
   
+  // 1. Setup Date Range (Current Month)
   const now = new Date();
-  const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
-  const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0);
+  const end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
 
+  // 2. Get all Log Data (Scanning up to Column W for Consumables)
   const lastLogRow = logSheet.getLastRow();
   if (lastLogRow < 4) return;
+  const logData = logSheet.getRange(4, 1, lastLogRow - 3, 23).getValues(); 
+
+  // 3. STEP ONE: DISCOVER UNIQUE CONSUMABLE NAMES FIRST
+  let itemNamesSet = new Set();
   
-  // Data from Logs: 
-  // Col U (Qty) = Index 20
-  // Col V (Item) = Index 21
-  // Col W (Timestamp) = Index 22
-  const logData = logSheet.getRange(4, 21, lastLogRow - 3, 3).getValues(); 
-  let consumableTotals = {};
-
   logData.forEach(row => {
-    let qty = parseFloat(row[0]) || 0; // Column U
-    let rawName = row[1];              // Column V
-    const timestamp = row[2];          // Column W
-
-    if (timestamp instanceof Date && timestamp >= firstDay && timestamp <= lastDay && rawName) {
-      
-      // CLEANING LOGIC
-      let cleanName = rawName
-        .replace(/\[.*?\]/g, "")    
-        .replace(/\(.*?\)/g, "")    
-        .trim();                    
-      
-      if (cleanName) {
-        // We add the actual quantity from Col U instead of just +1
-        consumableTotals[cleanName] = (consumableTotals[cleanName] || 0) + qty;
-      }
+    let cItem = cleanItemName(row[21]); // Consumable Item (Col V)
+    let cTS = row[22];                 // Consumable TS (Col W)
+    
+    if (cItem && cTS instanceof Date && cTS >= start && cTS <= end) {
+      itemNamesSet.add(cItem);
     }
   });
 
-  let output = [];
-  for (let item in consumableTotals) {
-    output.push([item, consumableTotals[item]]);
+  // 4. STEP TWO: SORT NAMES ALPHABETICALLY
+  let sortedNames = Array.from(itemNamesSet).sort((a, b) => a.localeCompare(b));
+
+  // 5. STEP THREE: CALCULATE TOTALS BASED ON SORTED NAMES
+  let finalData = sortedNames.map(itemName => {
+    let usedTotal = 0;
+    let returnedTotal = 0;
+
+    logData.forEach(row => {
+      // Check Consumable Usage (Logs Cols U, V, W)
+      if (cleanItemName(row[21]) === itemName) {
+        let cTS = row[22];
+        if (cTS instanceof Date && cTS >= start && cTS <= end) {
+          usedTotal += (parseFloat(row[20]) || 0); // Col U
+        }
+      }
+
+      // Check Returning (Logs Cols K, L, M)
+      if (cleanItemName(row[11]) === itemName) {
+        let rTS = row[12];
+        if (rTS instanceof Date && rTS >= start && rTS <= end) {
+          returnedTotal += (parseFloat(row[10]) || 0); // Col K
+        }
+      }
+    });
+
+    return [itemName, usedTotal, returnedTotal];
+  });
+
+  // 6. WRITE TO SHEET (Columns F, G, H starting at row 7)
+  // Clear old content from F7:H
+  const lastReportRow = reportSheet.getLastRow();
+  if (lastReportRow >= 7) {
+    reportSheet.getRange(7, 6, lastReportRow - 6, 3).clearContent();
   }
 
-  // Clear old data in C7:D
-  if (reportSheet.getLastRow() >= 7) {
-    reportSheet.getRange(7, 3, reportSheet.getLastRow() - 6, 2).clearContent();
+  if (finalData.length > 0) {
+    reportSheet.getRange(7, 6, finalData.length, 3).setValues(finalData);
   }
-
-  // Write new data starting at C7
-  if (output.length > 0) {
-    output.sort((a, b) => b[1] - a[1]); 
-    reportSheet.getRange(7, 3, output.length, 2).setValues(output);
-  }
-
-  ss.toast("Consumables updated with actual quantities!");
+  
+  ss.toast("✅ Consumables report generated and sorted alphabetically.");
 }
 
-function consolidateInstructorsForFormatting() {
+/**
+ * Helper to remove room numbers and "(available)" text
+ */
+function cleanItemName(str) {
+  if (!str) return "";
+  // Removes [Room XXX] and everything after the first "("
+  return str.replace(/\[.*?\]\s*/g, '').split('(')[0].trim();
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+function automatedMonthlyReportingCycle() {
+  const ss = SpreadsheetApp.getActive();
+  const ownerEmail = "cydjian1@gmail.com"; 
+  
+  // Calculate the month that just ended
+  const now = new Date();
+  const reportDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const monthLabel = Utilities.formatDate(reportDate, Session.getScriptTimeZone(), "MMMM yyyy");
+
+  // 1. Process all report data
+  updateMonthlyEquipmentBorrowing(reportDate);
+  updateMonthlyConsumables(reportDate);
+  categorizeReturnedItems(reportDate);
+  consolidateInstructorsForFormatting(reportDate);
+  
+  // 2. Email the specific "Monthly Report" tab as an Excel attachment
+  emailReportAsExcel("Monthly Report", ownerEmail, "Inventory Report: " + monthLabel);
+  
+  ss.toast("Monthly report cycle completed successfully!");
+}
+
+
+function consolidateInstructorsForFormatting(targetDate) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const logSheet = ss.getSheetByName("Logs");
   const formatSheet = ss.getSheetByName("For formatting");
@@ -645,82 +710,36 @@ function consolidateInstructorsForFormatting() {
   ss.toast("Instructors consolidated to 'For formatting' sheet!");
 }
 
-// Helper function to check if the date is within the current month
-function isValidEntry(dateVal, start, end) {
-  return (dateVal instanceof Date && dateVal >= start && dateVal <= end);
+/**
+ * EXCEL EXPORT LOGIC: Isolates the report and emails it
+ */
+function emailReportAsExcel(tabName, recipient, subject) {
+  const ss = SpreadsheetApp.getActive();
+  const sheet = ss.getSheetByName(tabName);
+  
+  // Create a temporary spreadsheet to hold only the report tab
+  const tempSS = SpreadsheetApp.create("Temp_Monthly_Report");
+  sheet.copyTo(tempSS).setName(tabName);
+  tempSS.deleteSheet(tempSS.getSheets()[0]); // Delete default Sheet1
+  
+  const fileId = tempSS.getId();
+  SpreadsheetApp.flush();
+  
+  // Convert the temp file to an Excel blob
+  const url = "https://docs.google.com/spreadsheets/d/" + fileId + "/export?format=xlsx";
+  const token = ScriptApp.getOAuthToken();
+  const response = UrlFetchApp.fetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
+  const blob = response.getBlob().setName(subject + ".xlsx");
+  
+  // Send the email with the attachment
+  GmailApp.sendEmail(recipient, subject, "Please find attached the inventory report for the previous month.", {
+    attachments: [blob]
+  });
+  
+  // Move temp file to Trash
+  DriveApp.getFileById(fileId).setTrashed(true);
 }
 
-function categorizeReturnedItems() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const inventorySheet = ss.getSheetByName("Inventory");
-  const logSheet = ss.getSheetByName("Logs");
-  const formatSheet = ss.getSheetByName("For formatting");
-
-  // 1. Map out the Inventory by Section
-  let itemCategoryMap = {};
-
-  // Get Equipment from Columns A-B (Rows 12 down)
-  const equipInv = inventorySheet.getRange(12, 1, inventorySheet.getLastRow() - 11, 2).getValues();
-  equipInv.forEach(row => {
-    if (row[0]) {
-      let cleanName = row[0].toString().toLowerCase().trim();
-      itemCategoryMap[cleanName] = "equipment";
-    }
-  });
-
-  // Get Consumables from Columns G-H (Rows 12 down)
-  const consInv = inventorySheet.getRange(12, 7, inventorySheet.getLastRow() - 11, 2).getValues();
-  consInv.forEach(row => {
-    if (row[0]) {
-      let cleanName = row[0].toString().toLowerCase().trim();
-      itemCategoryMap[cleanName] = "consumable";
-    }
-  });
-
-  // 2. Setup Timeframe (Current Month)
-  const now = new Date();
-  const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
-  const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-
-  // 3. Get Returning Data from Logs
-  // Col L = Item (Index 11), Col M = Timestamp (Index 12)
-  const lastLogRow = logSheet.getLastRow();
-  if (lastLogRow < 4) return;
-  const returningEntries = logSheet.getRange(4, 12, lastLogRow - 3, 2).getValues();
-
-  let returnedEquip = [];
-  let returnedConsumables = [];
-
-  // 4. Sort based on Inventory Sections
-  returningEntries.forEach(row => {
-    let rawName = row[0];
-    let timestamp = row[1];
-
-    if (timestamp instanceof Date && timestamp >= firstDay && timestamp <= lastDay && rawName) {
-      // Clean the log name for matching
-      let cleanLogName = rawName.replace(/\[.*?\]/g, "").replace(/\(.*?\)/g, "").trim().toLowerCase();
-      
-      let category = itemCategoryMap[cleanLogName];
-
-      if (category === "equipment") {
-        returnedEquip.push([cleanLogName.toUpperCase()]);
-      } else if (category === "consumable") {
-        returnedConsumables.push([cleanLogName.toUpperCase()]);
-      }
-    }
-  });
-
-  // 5. Output to "For formatting"
-  // Clear Columns C and D
-  formatSheet.getRange("C:D").clearContent();
-
-  if (returnedEquip.length > 0) {
-    formatSheet.getRange(1, 3, returnedEquip.length, 1).setValues(returnedEquip);
-  }
-  
-  if (returnedConsumables.length > 0) {
-    formatSheet.getRange(1, 4, returnedConsumables.length, 1).setValues(returnedConsumables);
-  }
-
-  ss.toast("Returns separated: " + returnedEquip.length + " Equip, " + returnedConsumables.length + " Consumables.");
+function isValidEntry(dateVal, start, end) {
+  return (dateVal instanceof Date && dateVal >= start && dateVal <= end);
 }
