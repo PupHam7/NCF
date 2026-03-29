@@ -17,6 +17,14 @@ function onOpen() {
     .addItem('Search C.I. in Logs', 'runCISearch')
     .addToUi();
 
+  ui.createMenu('⚠️ Clear Data')
+    .addItem('Clear Inventory', 'clearInventoryData')
+    .addItem('Clear Logs', 'clearLogsData')
+    .addItem('Clear Attendance', 'clearAttendanceData')
+    .addItem('Clear Monthly Report', 'clearMonthlyReportData')
+    .addToUi();
+
+
 }
 
 function showSidebar() {
@@ -76,18 +84,17 @@ function updateAndGuardInventory() {
   var fr3 = ss.getSheetByName("Form Responses 3"); // Consumables
   var ownerEmail = ss.getOwner().getEmail();
 
-  // Determine latest form submission
   var t1 = getLatestTimestamp(fr1);
   var t2 = getLatestTimestamp(fr2);
   var t3 = getLatestTimestamp(fr3);
   var latest = Math.max(t1, t2, t3);
 
-  // Email Notification Logic
   if (latest === t3 && t3 > 0) {
     processConsumableBorrow(fr3, invSheet, ownerEmail);
   } else if (latest === t1 && t1 > 0) {
     processEquipmentBorrow(fr1, ownerEmail);
   } else if (latest === t2 && t2 > 0) {
+    // This handles ALL returns
     processReturn(fr2, ownerEmail);
   }
 
@@ -146,11 +153,14 @@ function processEquipmentBorrow(sheet, ownerEmail) {
 function processReturn(sheet, ownerEmail) {
   var lastRow = sheet.getLastRow();
   var data = sheet.getRange(lastRow, 1, 1, 3).getValues()[0];
+  var now = new Date();
   var email = data[1];
   var rawItem = data[2];
   var cleanItem = rawItem.split(" (")[0];
 
   MailApp.sendEmail(email, "🔄 Return Confirmed", "Dear Clinical Instructors," + "\nGood day. This email serves as a confirmation that the Equipment and Consumables Return Google Form has been successfully completed and submitted. The return details, including the items returned and the corresponding date and time, have been recorded in the system for documentation and inventory monitoring." + "\n\nThank you for your time and cooperation in helping maintain an organized and efficient inventory management system." + "\n\nThank you for returning: " + cleanItem);
+
+  checkAndAlertLateReturn(email, cleanItem, now);
 }
 
 function updateAllFormChoicesAndColors(invSheet) {
@@ -255,6 +265,50 @@ function sendOverdueReminders() {
           + "\n\nThe item '" + item + "' is overdue.");
       }
     }
+  }
+}
+
+function checkAndAlertLateReturn(email, item, returnDate) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var ownerEmail = "cydjian1@gmail.com"; 
+  
+  // Sheets to check for original borrow record
+  var sourceSheets = ["Form Responses 1", "Form Responses 3"]; 
+  var found = false;
+
+  for (var s = 0; s < sourceSheets.length; s++) {
+    var sheet = ss.getSheetByName(sourceSheets[s]);
+    var data = sheet.getDataRange().getValues();
+    
+    // Search from bottom up for the most recent borrow
+    for (var i = data.length - 1; i >= 1; i--) {
+      var borrowTimestamp = new Date(data[i][0]);
+      // Column index for item name: FR1 uses index 1, FR3 uses index 2
+      var itemIdx = (sourceSheets[s] === "Form Responses 1") ? 1 : 2;
+      // Column index for email: FR1 uses index 3, FR3 uses index 1
+      var emailIdx = (sourceSheets[s] === "Form Responses 1") ? 3 : 1;
+
+      var borrowItem = data[i][itemIdx].split(" (")[0];
+      var borrowEmail = data[i][emailIdx];
+
+      if (borrowEmail === email && borrowItem === item) {
+        var diffInHours = (returnDate.getTime() - borrowTimestamp.getTime()) / (1000 * 60 * 60);
+
+        if (diffInHours > 24) {
+          var hoursLate = Math.floor(diffInHours - 24);
+          MailApp.sendEmail(ownerEmail, "LATE RETURN ALERT: " + item, 
+            "Type: " + (sourceSheets[s] === "Form Responses 1" ? "Equipment" : "Consumable") + "\n" +
+            "User: " + email + "\n" +
+            "Item: " + item + "\n" +
+            "Borrowed: " + borrowTimestamp.toLocaleString() + "\n" +
+            "Returned: " + returnDate.toLocaleString() + "\n" +
+            "Status: " + hoursLate + " hour(s) past the 24-hour deadline.");
+        }
+        found = true;
+        break; 
+      }
+    }
+    if (found) break; 
   }
 }
 
@@ -469,202 +523,142 @@ function showItemManager() {
 }
 
 
+function automatedMonthlyReportingCycle() {
+  const ss = SpreadsheetApp.getActive();
+  const reportSheet = ss.getSheetByName("Monthly Report");
+  const ownerEmail = "cydjian1@gmail.com"; 
+  
+  const now = new Date();
+  // Targets current month
+  const reportDate = new Date(now.getFullYear(), now.getMonth(), 1); 
+  const monthLabel = Utilities.formatDate(reportDate, Session.getScriptTimeZone(), "MMMM yyyy").toUpperCase();
+
+  // --- NEW HEADER FORMATTING ---
+  const headerRange = reportSheet.getRange("B4:AJ4");
+  
+  // Unmerge first to avoid errors if previously merged differently
+  headerRange.breakApart(); 
+  headerRange.merge();
+  
+  headerRange.setValue("REPORT FOR: " + monthLabel)
+             .setFontSize(30)
+             .setFontWeight("bold")
+             .setHorizontalAlignment("center")
+             .setVerticalAlignment("middle")
+             .setFontFamily("Arial"); // Or your preferred font
+  // ------------------------------
+
+  // 1. Run the calculations and formatting (starting at Row 8 now)
+  generateMonthlyEquipment(reportDate);
+  generateMonthlyConsumables(reportDate);
+  consolidateInstructorsForFormatting(reportDate);
+  
+  // Ensure all data is written to the cells
+  SpreadsheetApp.flush();
+  
+  // 2. Send the Direct Link
+  emailReportAsLink("Monthly Report", ownerEmail, "Inventory Report Summary: " + monthLabel);
+  
+  ss.toast("✅ " + monthLabel + " cycle complete. Header updated!");
+}
 
 
-
-
-
-
-
-
-
-
-
-
-function generateMonthlyEquipment() {
+function generateMonthlyEquipment(targetDate) {
   const ss = SpreadsheetApp.getActive();
   const logSheet = ss.getSheetByName("Logs");
   const reportSheet = ss.getSheetByName("Monthly Report");
   
-  // 1. Setup Date Range (Current Month)
-  const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0);
-  const end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+  // Use passed date or default to now
+  const date = targetDate || new Date();
+  const start = new Date(date.getFullYear(), date.getMonth(), 1, 0, 0, 0);
+  const end = new Date(date.getFullYear(), date.getMonth() + 1, 0, 23, 59, 59);
 
-  // 2. Get all Log Data
   const lastLogRow = logSheet.getLastRow();
   if (lastLogRow < 4) return;
   const logData = logSheet.getRange(4, 1, lastLogRow - 3, 13).getValues(); 
 
-  // 3. STEP ONE: DISCOVER UNIQUE NAMES FIRST
   let itemNamesSet = new Set();
   
   logData.forEach(row => {
-    let bItem = cleanItemName(row[1]); // Borrowing Item (Col B)
-    let bTS = row[2];                 // Borrowing TS (Col C)
-    
+    let bItem = cleanItemName(row[1]); 
+    let bTS = row[2];                 
     if (bItem && bTS instanceof Date && bTS >= start && bTS <= end) {
       itemNamesSet.add(bItem);
     }
   });
 
-  // 4. STEP TWO: SORT NAMES ALPHABETICALLY
   let sortedNames = Array.from(itemNamesSet).sort((a, b) => a.localeCompare(b));
 
-  // 5. STEP THREE: CALCULATE TOTALS BASED ON SORTED NAMES
-  // This ensures Index 0 of Names always matches Index 0 of Totals
   let finalData = sortedNames.map(itemName => {
     let borrowedTotal = 0;
     let returnedTotal = 0;
-
     logData.forEach(row => {
-      // Check Borrowing (Cols A, B, C)
-      if (cleanItemName(row[1]) === itemName) {
-        let bTS = row[2];
-        if (bTS instanceof Date && bTS >= start && bTS <= end) {
+      if (cleanItemName(row[1]) === itemName && isValidEntry(row[2], start, end)) {
           borrowedTotal += (parseFloat(row[0]) || 0);
-        }
       }
-
-      // Check Returning (Cols K, L, M)
-      if (cleanItemName(row[11]) === itemName) {
-        let rTS = row[12];
-        if (rTS instanceof Date && rTS >= start && rTS <= end) {
+      if (cleanItemName(row[11]) === itemName && isValidEntry(row[12], start, end)) {
           returnedTotal += (parseFloat(row[10]) || 0);
-        }
       }
     });
-
     return [itemName, borrowedTotal, returnedTotal];
   });
 
-  // 6. WRITE TO SHEET
-  // Clear old content from B7:D
-  const lastReportRow = reportSheet.getLastRow();
-  if (lastReportRow >= 7) {
-    reportSheet.getRange(7, 2, lastReportRow - 6, 3).clearContent();
+  if (reportSheet.getLastRow() >= 8) {
+    reportSheet.getRange(8, 2, reportSheet.getLastRow() - 7, 3).clearContent();
   }
 
   if (finalData.length > 0) {
-    reportSheet.getRange(7, 2, finalData.length, 3).setValues(finalData);
+    reportSheet.getRange(8, 2, finalData.length, 3).setValues(finalData);
   }
-  
-  ss.toast("✅ Report generated: Items sorted alphabetically before calculation.");
 }
 
 
-function generateMonthlyConsumables() {
+function generateMonthlyConsumables(targetDate) {
   const ss = SpreadsheetApp.getActive();
   const logSheet = ss.getSheetByName("Logs");
   const reportSheet = ss.getSheetByName("Monthly Report");
   
-  // 1. Setup Date Range (Current Month)
-  const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0);
-  const end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+  const date = targetDate || new Date();
+  const start = new Date(date.getFullYear(), date.getMonth(), 1, 0, 0, 0);
+  const end = new Date(date.getFullYear(), date.getMonth() + 1, 0, 23, 59, 59);
 
-  // 2. Get all Log Data (Scanning up to Column W for Consumables)
   const lastLogRow = logSheet.getLastRow();
   if (lastLogRow < 4) return;
   const logData = logSheet.getRange(4, 1, lastLogRow - 3, 23).getValues(); 
 
-  // 3. STEP ONE: DISCOVER UNIQUE CONSUMABLE NAMES FIRST
   let itemNamesSet = new Set();
   
   logData.forEach(row => {
-    let cItem = cleanItemName(row[21]); // Consumable Item (Col V)
-    let cTS = row[22];                 // Consumable TS (Col W)
-    
-    if (cItem && cTS instanceof Date && cTS >= start && cTS <= end) {
+    let cItem = cleanItemName(row[21]); // Col V
+    let cTS = row[22];                 // Col W
+    if (cItem && isValidEntry(cTS, start, end)) {
       itemNamesSet.add(cItem);
     }
   });
 
-  // 4. STEP TWO: SORT NAMES ALPHABETICALLY
   let sortedNames = Array.from(itemNamesSet).sort((a, b) => a.localeCompare(b));
 
-  // 5. STEP THREE: CALCULATE TOTALS BASED ON SORTED NAMES
   let finalData = sortedNames.map(itemName => {
     let usedTotal = 0;
     let returnedTotal = 0;
-
     logData.forEach(row => {
-      // Check Consumable Usage (Logs Cols U, V, W)
-      if (cleanItemName(row[21]) === itemName) {
-        let cTS = row[22];
-        if (cTS instanceof Date && cTS >= start && cTS <= end) {
-          usedTotal += (parseFloat(row[20]) || 0); // Col U
-        }
+      if (cleanItemName(row[21]) === itemName && isValidEntry(row[22], start, end)) {
+          usedTotal += (parseFloat(row[20]) || 0);
       }
-
-      // Check Returning (Logs Cols K, L, M)
-      if (cleanItemName(row[11]) === itemName) {
-        let rTS = row[12];
-        if (rTS instanceof Date && rTS >= start && rTS <= end) {
-          returnedTotal += (parseFloat(row[10]) || 0); // Col K
-        }
+      if (cleanItemName(row[11]) === itemName && isValidEntry(row[12], start, end)) {
+          returnedTotal += (parseFloat(row[10]) || 0);
       }
     });
-
     return [itemName, usedTotal, returnedTotal];
   });
 
-  // 6. WRITE TO SHEET (Columns F, G, H starting at row 7)
-  // Clear old content from F7:H
-  const lastReportRow = reportSheet.getLastRow();
-  if (lastReportRow >= 7) {
-    reportSheet.getRange(7, 6, lastReportRow - 6, 3).clearContent();
+  if (reportSheet.getLastRow() >= 8) {
+    reportSheet.getRange(8, 6, reportSheet.getLastRow() - 7, 3).clearContent();
   }
 
   if (finalData.length > 0) {
-    reportSheet.getRange(7, 6, finalData.length, 3).setValues(finalData);
+    reportSheet.getRange(8, 6, finalData.length, 3).setValues(finalData);
   }
-  
-  ss.toast("✅ Consumables report generated and sorted alphabetically.");
-}
-
-/**
- * Helper to remove room numbers and "(available)" text
- */
-function cleanItemName(str) {
-  if (!str) return "";
-  // Removes [Room XXX] and everything after the first "("
-  return str.replace(/\[.*?\]\s*/g, '').split('(')[0].trim();
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-function automatedMonthlyReportingCycle() {
-  const ss = SpreadsheetApp.getActive();
-  const ownerEmail = "cydjian1@gmail.com"; 
-  
-  // Calculate the month that just ended
-  const now = new Date();
-  const reportDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const monthLabel = Utilities.formatDate(reportDate, Session.getScriptTimeZone(), "MMMM yyyy");
-
-  // 1. Process all report data
-  updateMonthlyEquipmentBorrowing(reportDate);
-  updateMonthlyConsumables(reportDate);
-  categorizeReturnedItems(reportDate);
-  consolidateInstructorsForFormatting(reportDate);
-  
-  // 2. Email the specific "Monthly Report" tab as an Excel attachment
-  emailReportAsExcel("Monthly Report", ownerEmail, "Inventory Report: " + monthLabel);
-  
-  ss.toast("Monthly report cycle completed successfully!");
 }
 
 
@@ -713,33 +707,207 @@ function consolidateInstructorsForFormatting(targetDate) {
 /**
  * EXCEL EXPORT LOGIC: Isolates the report and emails it
  */
-function emailReportAsExcel(tabName, recipient, subject) {
+function emailReportAsLink(tabName, recipient, subject) {
   const ss = SpreadsheetApp.getActive();
   const sheet = ss.getSheetByName(tabName);
+  const sheetId = sheet.getSheetId();
   
-  // Create a temporary spreadsheet to hold only the report tab
-  const tempSS = SpreadsheetApp.create("Temp_Monthly_Report");
-  sheet.copyTo(tempSS).setName(tabName);
-  tempSS.deleteSheet(tempSS.getSheets()[0]); // Delete default Sheet1
+  // Construct the direct link to the specific tab
+  const ssUrl = ss.getUrl() + "#gid=" + sheetId;
   
-  const fileId = tempSS.getId();
-  SpreadsheetApp.flush();
+  const body = "Dear Admin,\n\n" +
+               "The inventory report for this month has been generated and is ready for review.\n\n" +
+               "You can view the full report, including the Pie Charts and summary tables, by clicking the link below:\n" +
+               ssUrl + "\n\n" +
+               "This is an automated notification from the NCF Inventory Management System.";
+
+  GmailApp.sendEmail(recipient, subject, body);
   
-  // Convert the temp file to an Excel blob
-  const url = "https://docs.google.com/spreadsheets/d/" + fileId + "/export?format=xlsx";
-  const token = ScriptApp.getOAuthToken();
-  const response = UrlFetchApp.fetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
-  const blob = response.getBlob().setName(subject + ".xlsx");
-  
-  // Send the email with the attachment
-  GmailApp.sendEmail(recipient, subject, "Please find attached the inventory report for the previous month.", {
-    attachments: [blob]
-  });
-  
-  // Move temp file to Trash
-  DriveApp.getFileById(fileId).setTrashed(true);
+  ss.toast("📧 Notification link sent to owner!");
+}
+
+function cleanItemName(str) {
+  if (!str) return "";
+  return str.replace(/\[.*?\]\s*/g, '').split('(')[0].trim();
 }
 
 function isValidEntry(dateVal, start, end) {
   return (dateVal instanceof Date && dateVal >= start && dateVal <= end);
+}
+
+function separateMissingAndDamaged() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const responseSheet = ss.getSheetByName("Form Responses 7"); 
+  const reportSheet = ss.getSheetByName("Damaged/Missing");
+  const ownerEmail = "cydjian1@gmail.com"; 
+  
+  const lastRow = responseSheet.getLastRow();
+  const data = responseSheet.getRange(lastRow, 1, 1, 11).getValues()[0];
+  
+  // Mapping based on your Form Responses 7 layout
+  const timestamp = data[0];   // A
+  const email     = data[1];   // B
+  const type      = data[2];   // C (Missing or Damaged)
+  const itemName  = data[3];   // D
+  const returnee  = data[4];   // E
+  const instructor= data[5];   // F
+  const contact   = data[6];   // G
+  const note      = data[7];   // H
+  const photoUrl  = data[8];   // I
+  const room      = data[9];   // J
+
+  if (type === "Damaged") {
+    // Columns A-G: [Date, Equipment, Room, ReportedBy, Instructor, Photo, Note]
+    let destRow = findFirstEmptyRow(reportSheet, "A", 3); 
+    let targetRange = reportSheet.getRange(destRow, 1, 1, 7);
+    
+    targetRange.setValues([[timestamp, itemName, room, returnee, instructor, photoUrl, note]]);
+    
+    // Formatting: Set Font Size 12 and Vertical Alignment
+    targetRange.setFontSize(12)
+               .setVerticalAlignment("middle")
+               .setWrap(true); // Ensures long notes don't spill out
+               
+  } else if (type === "Missing") {
+    // Columns I-N: [Date, Equipment, Room, ReportedBy, Instructor, Note]
+    let destRow = findFirstEmptyRow(reportSheet, "I", 3);
+    let targetRange = reportSheet.getRange(destRow, 9, 1, 6);
+    
+    targetRange.setValues([[timestamp, itemName, room, returnee, instructor, note]]);
+    
+    // Formatting: Set Font Size 12 and Vertical Alignment
+    targetRange.setFontSize(12)
+               .setVerticalAlignment("middle")
+               .setWrap(true);
+  }
+
+  // Real-time Email Alert to Owner
+  MailApp.sendEmail(ownerEmail, "⚠️ INCIDENT REPORT: " + type, 
+    "An instructor has reported an issue.\n\n" +
+    "Type: " + type + "\n" +
+    "Item: " + itemName + "\n" +
+    "Room: " + room + "\n" +
+    "Clinical Instructor: " + instructor + "\n" +
+    "Reported By: " + returnee + "\n" +
+    "Notes: " + note);
+}
+
+function findFirstEmptyRow(sheet, columnLetter, startRow) {
+  const column = sheet.getRange(columnLetter + startRow + ":" + columnLetter).getValues();
+  for (let i = 0; i < column.length; i++) {
+    if (column[i][0] === "" || column[i][0] === null) {
+      return i + startRow;
+    }
+  }
+  return sheet.getLastRow() + 1;
+}
+
+
+// --- 1. CLEAR INVENTORY (With Confirmation) ---
+function clearInventoryData() {
+  var ui = SpreadsheetApp.getUi();
+  var response = ui.alert('⚠️ Confirm Action', 'Clear all Inventory items and Consumables?', ui.ButtonSet.YES_NO);
+
+  if (response == ui.Button.YES) {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName("Inventory");
+    const lastRow = sheet.getLastRow();
+    
+    if (lastRow >= 11) {
+      // 1. Define the Equipment Range (A11 to E)
+      const eqRange = sheet.getRange(11, 1, lastRow - 10, 5);
+      // 2. Define the Consumables Range (G11 to L)
+      const consRange = sheet.getRange(11, 7, lastRow - 10, 6);
+
+      // --- Execute Clear, Unmerge, and Color Reset ---
+      eqRange.breakApart()           // Unmerges any merged cells in this range
+             .clearContent()         // Removes text and data
+             .setBackground('#ffffff'); // Resets to white
+
+      consRange.breakApart()         // Unmerges any merged cells in this range
+               .clearContent()       // Removes text and data
+               .setBackground('#ffffff'); // Resets to white
+      
+      ui.alert('✅ Success', 'Inventory data has been cleared, cells unmerged, and colors reset.', ui.ButtonSet.OK);
+    } else {
+      ui.alert('ℹ️ Notice', 'Inventory is already empty (No data below row 10).', ui.ButtonSet.OK);
+    }
+  }
+}
+
+function clearLogsData() {
+  var ui = SpreadsheetApp.getUi();
+  // POP-UP CONFIRMATION
+  var response = ui.alert(
+    '⚠️ Confirm Action', 
+    'This will permanently delete ALL data from:\n- Form Responses 1 (Equipment)\n- Form Responses 2 (Returns)\n- Form Responses 3 (Consumables)\n\nDo you want to proceed?', 
+    ui.ButtonSet.YES_NO
+  );
+
+  if (response == ui.Button.YES) {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheetNames = ["Form Responses 1", "Form Responses 2", "Form Responses 3"];
+    var clearedCount = 0;
+
+    sheetNames.forEach(function(name) {
+      var sheet = ss.getSheetByName(name);
+      
+      if (sheet) {
+        var lastRow = sheet.getLastRow();
+        if (lastRow >= 2) {
+          // Clears from Row 2 to the very bottom, across all columns
+          sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).clearContent();
+          clearedCount++;
+        }
+      }
+    });
+
+    if (clearedCount > 0) {
+      ui.alert('✅ Success', 'Data cleared from ' + clearedCount + ' log sheets.', ui.ButtonSet.OK);
+    } else {
+      ui.alert('ℹ️ Notice', 'Log sheets were already empty.', ui.ButtonSet.OK);
+    }
+  }
+}
+
+// --- 3. CLEAR ATTENDANCE (With Confirmation) ---
+function clearAttendanceData() {
+  var ui = SpreadsheetApp.getUi();
+  var response = ui.alert('⚠️ Confirm Action', 'Delete all attendance records?', ui.ButtonSet.YES_NO);
+
+  if (response == ui.Button.YES) {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName("Attendance");
+    const lastRow = sheet.getLastRow();
+    
+    if (lastRow >= 3) {
+      const rowCount = lastRow - 2;
+      sheet.deleteRows(3, rowCount);
+      ui.alert('✅ Success', 'Deleted ' + rowCount + ' attendance records.', ui.ButtonSet.OK);
+    } else {
+      ui.alert('ℹ️ Notice', 'Attendance sheet is already empty.', ui.ButtonSet.OK);
+    }
+  }
+}
+
+// --- 4. CLEAR MONTHLY REPORT (With Confirmation) ---
+function clearMonthlyReportData() {
+  var ui = SpreadsheetApp.getUi();
+  var response = ui.alert('⚠️ Confirm Action', 'Clear the tables in the Monthly Report?', ui.ButtonSet.YES_NO);
+
+  if (response == ui.Button.YES) {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName("Monthly Report");
+    const lastRow = sheet.getLastRow();
+    
+    if (lastRow >= 8) {
+      // Equipment: B8 to D | Consumables: F8 to H
+      sheet.getRange(8, 2, lastRow - 7, 3).clearContent();
+      sheet.getRange(8, 6, lastRow - 7, 3).clearContent();
+      
+      ui.alert('✅ Success', 'Monthly Report tables cleared.', ui.ButtonSet.OK);
+    } else {
+      ui.alert('ℹ️ Notice', 'Monthly Report tables are already empty.', ui.ButtonSet.OK);
+    }
+  }
 }
