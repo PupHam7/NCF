@@ -11,6 +11,10 @@ function onOpen() {
     .addItem('📃 Open Attendance UI', 'showSidebar')
     .addSeparator()
     .addItem('🔄 Refresh Inventory & Forms', 'refreshInventory')
+    .addSeparator()
+    .addItem('🔒 Lock System', 'manualLockSystem')
+    .addSeparator()
+    .addItem('📊Update Monthly Report', 'automatedMonthlyReportingCycle')
     .addToUi();
 
   ui.createMenu('🔍 Search')
@@ -28,6 +32,7 @@ function onOpen() {
 }
 
 function showSidebar() {
+  if (!authenticateCI()) return;
   var html = HtmlService.createHtmlOutputFromFile('Sidebar')
     .setTitle('Student Attendance')
     .setWidth(300);
@@ -45,7 +50,6 @@ function handleAttendance(data, type) {
 
   if (type === 'in') {
     // --- 11-DIGIT CHECKER ---
-    // Removes any spaces or dashes and checks if exactly 11 digits remain
     var cleanContact = data.contact.toString().replace(/[^0-9]/g, "");
     if (cleanContact.length !== 11) {
       return "❌ Error: Contact number must be exactly 11 digits!";
@@ -57,7 +61,6 @@ function handleAttendance(data, type) {
       }
     }
 
-    // Use the cleaned 11-digit number for the record
     sheet.appendRow([now, data.dept, data.name, data.email, "'" + cleanContact, ""]);
     sheet.getRange(sheet.getLastRow(), 1).setNumberFormat("M/d/yyyy H:mm:ss AM/PM");
     return "✅ Clocked In: " + now.toLocaleTimeString();
@@ -176,7 +179,6 @@ function updateAllFormChoicesAndColors(invSheet) {
   now.setHours(0, 0, 0, 0);
 
   // --- 1. Process Equipment (A-E) ---
-  // Range: Col A to E (5 columns)
   var eqData = invSheet.getRange(11, 1, lastRow - 10, 5).getValues();
   var currentEqRoom = "General"; 
 
@@ -189,13 +191,12 @@ function updateAllFormChoicesAndColors(invSheet) {
     } else {
       var label = "[" + currentEqRoom + "] " + itemName + (row[3] > 0 ? " (" + row[3] + " available)" : " (OUT OF STOCK)");
       eqChoices.push(label);
-      // Highlight A-D based on Available Unit (Col D / Index 3)
+      // Highlight A-D based on Available Unit 
       invSheet.getRange(i + 11, 1, 1, 5).setBackground(row[3] <= 3 ? "#ff9999" : null);
     }
   });
 
   // --- 2. Process Consumables (G-L) ---
-  // Range: Col G to L (6 columns). G=0, H=1, I=2, J=3, K=4, L=5
   var consData = invSheet.getRange(11, 7, lastRow - 10, 6).getValues();
   var currentConsRoom = "General";
 
@@ -210,7 +211,7 @@ function updateAllFormChoicesAndColors(invSheet) {
       consChoices.push(label);
 
       var currentRow = i + 11;
-      // Expiry Date is in Column L (Index 5 of this range)
+      // Expiry Date is in Column L 
       var expiryDate = row[5] instanceof Date ? new Date(row[5]) : null;
       var expiryCell = invSheet.getRange(currentRow, 12); // Column L is 12
       var expiryColor = null;
@@ -225,7 +226,7 @@ function updateAllFormChoicesAndColors(invSheet) {
       }
       expiryCell.setBackground(expiryColor);
 
-      // Highlight G-J based on Available Unit (Col J / Index 3)
+      // Highlight G-J based on Available Unit 
       if (row[3] <= 3) {
         invSheet.getRange(currentRow, 7, 1, 5).setBackground("#ff9999");
       } else {
@@ -257,7 +258,7 @@ function sendOverdueReminders() {
     var item = borrows[i][1].split(" (")[0];
     var email = borrows[i][3];
 
-    if ((now - timestamp) > (24 * 60 * 60 * 1000)) {
+    if ((now - timestamp) > (30 * 60 * 1000)) {
       var isReturned = returns.some(r => r[1] === email && r[2].indexOf(item) !== -1);
       if (!isReturned && email) {
         MailApp.sendEmail(email, "⚠️ OVERDUE: Return Reminder", "Dear Clinical Instructors," +
@@ -272,7 +273,6 @@ function checkAndAlertLateReturn(email, item, returnDate) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var ownerEmail = "cydjian1@gmail.com"; 
   
-  // Sheets to check for original borrow record
   var sourceSheets = ["Form Responses 1", "Form Responses 3"]; 
   var found = false;
 
@@ -280,7 +280,6 @@ function checkAndAlertLateReturn(email, item, returnDate) {
     var sheet = ss.getSheetByName(sourceSheets[s]);
     var data = sheet.getDataRange().getValues();
     
-    // Search from bottom up for the most recent borrow
     for (var i = data.length - 1; i >= 1; i--) {
       var borrowTimestamp = new Date(data[i][0]);
       // Column index for item name: FR1 uses index 1, FR3 uses index 2
@@ -389,6 +388,7 @@ function runCISearch() {
 }
 
 function refreshInventory() {
+  if (!authenticateCI()) return;
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var invSheet = ss.getSheetByName("Inventory");
 
@@ -446,7 +446,6 @@ function modifyInventory(action, data) {
       // 3. FIND FIRST EMPTY ROW UNDER THAT ROOM
       let rowToAdd = roomRow + 1;
       while (invSheet.getRange(rowToAdd, startCol).getValue() !== "") {
-        // If we hit another Room header, we must insert a row to avoid overwriting it
         if (invSheet.getRange(rowToAdd, startCol).getValue().toString().toLowerCase().includes("room")) {
           invSheet.insertRowBefore(rowToAdd);
           break; 
@@ -460,19 +459,12 @@ function modifyInventory(action, data) {
       invSheet.getRange(rowToAdd, startCol).setValue(data.name);
       invSheet.getRange(rowToAdd, startCol + 1).setValue(data.stock);
 
-      // Shelf (Eq) or Unit (Consumables)
-
-
 
       if (isEq) {
         invSheet.getRange(rowToAdd, 5).setValue(data.shelf); // Column E
 
-
-
       } else {
         invSheet.getRange(rowToAdd, 11).setValue(data.unit); // Column K
-
-
 
       }
 
@@ -516,6 +508,7 @@ function modifyInventory(action, data) {
 
 // Function to specifically open the Item Manager Sidebar
 function showItemManager() {
+  if (!authenticateCI()) return;
   var html = HtmlService.createHtmlOutputFromFile('ItemManager') 
     .setTitle('NCF Item Manager')
     .setWidth(300);
@@ -545,10 +538,10 @@ function automatedMonthlyReportingCycle() {
              .setFontWeight("bold")
              .setHorizontalAlignment("center")
              .setVerticalAlignment("middle")
-             .setFontFamily("Arial"); // Or your preferred font
+             .setFontFamily("Arial"); 
   // ------------------------------
 
-  // 1. Run the calculations and formatting (starting at Row 8 now)
+  // 1. Run the calculations and formatting 
   generateMonthlyEquipment(reportDate);
   generateMonthlyConsumables(reportDate);
   consolidateInstructorsForFormatting(reportDate);
@@ -712,7 +705,6 @@ function emailReportAsLink(tabName, recipient, subject) {
   const sheet = ss.getSheetByName(tabName);
   const sheetId = sheet.getSheetId();
   
-  // Construct the direct link to the specific tab
   const ssUrl = ss.getUrl() + "#gid=" + sheetId;
   
   const body = "Dear Admin,\n\n" +
@@ -744,17 +736,16 @@ function separateMissingAndDamaged() {
   const lastRow = responseSheet.getLastRow();
   const data = responseSheet.getRange(lastRow, 1, 1, 11).getValues()[0];
   
-  // Mapping based on your Form Responses 7 layout
-  const timestamp = data[0];   // A
-  const email     = data[1];   // B
-  const type      = data[2];   // C (Missing or Damaged)
-  const itemName  = data[3];   // D
-  const returnee  = data[4];   // E
-  const instructor= data[5];   // F
-  const contact   = data[6];   // G
-  const note      = data[7];   // H
-  const photoUrl  = data[8];   // I
-  const room      = data[9];   // J
+  const timestamp = data[0];   
+  const email     = data[1];   
+  const type      = data[2];   
+  const itemName  = data[3];   
+  const returnee  = data[4];   
+  const instructor= data[5];   
+  const contact   = data[6];   
+  const note      = data[7];   
+  const photoUrl  = data[8];   
+  const room      = data[9];   
 
   if (type === "Damaged") {
     // Columns A-G: [Date, Equipment, Room, ReportedBy, Instructor, Photo, Note]
@@ -763,10 +754,9 @@ function separateMissingAndDamaged() {
     
     targetRange.setValues([[timestamp, itemName, room, returnee, instructor, photoUrl, note]]);
     
-    // Formatting: Set Font Size 12 and Vertical Alignment
     targetRange.setFontSize(12)
                .setVerticalAlignment("middle")
-               .setWrap(true); // Ensures long notes don't spill out
+               .setWrap(true); 
                
   } else if (type === "Missing") {
     // Columns I-N: [Date, Equipment, Room, ReportedBy, Instructor, Note]
@@ -805,6 +795,7 @@ function findFirstEmptyRow(sheet, columnLetter, startRow) {
 
 // --- 1. CLEAR INVENTORY (With Confirmation) ---
 function clearInventoryData() {
+  if (!authenticateCI()) return;
   var ui = SpreadsheetApp.getUi();
   var response = ui.alert('⚠️ Confirm Action', 'Clear all Inventory items and Consumables?', ui.ButtonSet.YES_NO);
 
@@ -836,6 +827,7 @@ function clearInventoryData() {
 }
 
 function clearLogsData() {
+  if (!authenticateCI()) return;
   var ui = SpreadsheetApp.getUi();
   // POP-UP CONFIRMATION
   var response = ui.alert(
@@ -872,6 +864,7 @@ function clearLogsData() {
 
 // --- 3. CLEAR ATTENDANCE (With Confirmation) ---
 function clearAttendanceData() {
+  if (!authenticateCI()) return;
   var ui = SpreadsheetApp.getUi();
   var response = ui.alert('⚠️ Confirm Action', 'Delete all attendance records?', ui.ButtonSet.YES_NO);
 
@@ -892,6 +885,7 @@ function clearAttendanceData() {
 
 // --- 4. CLEAR MONTHLY REPORT (With Confirmation) ---
 function clearMonthlyReportData() {
+  if (!authenticateCI()) return;
   var ui = SpreadsheetApp.getUi();
   var response = ui.alert('⚠️ Confirm Action', 'Clear the tables in the Monthly Report?', ui.ButtonSet.YES_NO);
 
@@ -910,4 +904,61 @@ function clearMonthlyReportData() {
       ui.alert('ℹ️ Notice', 'Monthly Report tables are already empty.', ui.ButtonSet.OK);
     }
   }
+}
+
+function authenticateCI() {
+  const ui = SpreadsheetApp.getUi();
+  const ss = SpreadsheetApp.getActive();
+  const userProps = PropertiesService.getUserProperties();
+  const SESSION_TIMEOUT = 30 * 60 * 1000; // 30 minutes
+  
+  const now = new Date().getTime();
+  const lastAuth = userProps.getProperty('lastAuthTimestamp');
+
+  // 1. Check for Active Session
+  if (lastAuth && (now - lastAuth) < SESSION_TIMEOUT) {
+    let minutesLeft = Math.ceil((SESSION_TIMEOUT - (now - lastAuth)) / 60000);
+    ss.toast("🔑 Session Active: " + minutesLeft + " mins remaining.", "Security Check");
+    return true; 
+  }
+
+  // 2. Request QR ID
+  const qrSheet = ss.getSheetByName("CI_QR");
+  const authPrompt = ui.prompt('🔒 Security Authentication', 'Please scan or enter your CI QR ID:', ui.ButtonSet.OK_CANCEL);
+  
+  if (authPrompt.getSelectedButton() == ui.Button.OK) {
+    const inputId = authPrompt.getResponseText().trim();
+    
+    if (inputId === "") {
+      ui.alert('⚠️ Input Required', 'Unauthorized: Please check your QR ID and try again.', ui.ButtonSet.OK);
+      return false;
+    }
+
+    const lastRow = qrSheet.getLastRow();
+    const validIds = qrSheet.getRange(2, 2, lastRow - 1, 1).getValues().flat().map(String);
+
+    // 3. Validation Logic
+    if (validIds.indexOf(inputId) !== -1) {
+      // SUCCESS
+      userProps.setProperty('lastAuthTimestamp', now.toString());
+      ui.alert('✅ Access Granted', 'Authorized: You may now use the system.', ui.ButtonSet.OK);
+      return true;
+    } else {
+      // FAILURE
+      ui.alert('❌ Access Denied', 'Unauthorized: Please check your QR ID and ensure you are registered in the CI_QR tab.', ui.ButtonSet.OK);
+      return false;
+    }
+  }
+  
+  return false; // User clicked Cancel or closed the prompt
+}
+
+function manualLockSystem() {
+  const ui = SpreadsheetApp.getUi();
+  
+  // Delete the session timestamp from the script's memory
+  PropertiesService.getUserProperties().deleteProperty('lastAuthTimestamp');
+  
+  // Provide clear feedback to the user
+  ui.alert('🔒 System Locked', 'Session terminated. You have been logged out successfully.', ui.ButtonSet.OK);
 }
