@@ -258,7 +258,7 @@ function sendOverdueReminders() {
     var item = borrows[i][1].split(" (")[0];
     var email = borrows[i][3];
 
-    if ((now - timestamp) > (30 * 60 * 1000)) {
+    if ((now - timestamp) > (24 * 60 * 60 * 1000)) {
       var isReturned = returns.some(r => r[1] === email && r[2].indexOf(item) !== -1);
       if (!isReturned && email) {
         MailApp.sendEmail(email, "⚠️ OVERDUE: Return Reminder", "Dear Clinical Instructors," +
@@ -403,33 +403,75 @@ function refreshInventory() {
 
 
 function modifyInventory(action, data) {
+  // 1. SECURITY CHECK: Requires QR Login session
+  if (!authenticateCI()) return "🔒 Unauthorized: Please scan QR ID first.";
+
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const invSheet = ss.getSheetByName("Inventory");
+  if (!invSheet) return "❌ Error: Inventory sheet not found.";
 
   const isEq = data.type.includes("Equipment");
-  const startCol = isEq ? 1 : 7; // A (1) or G (7)
-  const lastRow = invSheet.getLastRow();
-
-  // 1. GLOBAL DUPLICATE CHECK
-  const fullRange = invSheet.getRange(11, startCol, Math.max(lastRow - 10, 1), 1).getValues();
-
-
-  const searchName = data.name.trim().toLowerCase();
-  let existingRow = -1;
-
-  for (let i = 0; i < fullRange.length; i++) {
-    if (fullRange[i][0].toString().toLowerCase().trim() === searchName) {
-      existingRow = i + 11;
-      break;
-    }
-  }
+  const startCol = isEq ? 1 : 7; // A=1 (Equipment), G=7 (Consumables)
+  const numCols = isEq ? 5 : 6;  // A-E=5 columns, G-L=6 columns
+  const headerColor = isEq ? "#c3f3ca" : "#CFE2F3";
+  
+  let lastRow = invSheet.getLastRow();
 
   try {
+    // --- 2. CREATE NEW ROOM LOGIC (Stand-alone or with Item) ---
+    if (data.newRoom && data.newRoom.trim() !== "") {
+      const newRoomName = data.newRoom.trim();
+      const sectionRange = invSheet.getRange(1, startCol, lastRow + 1, 1).getValues().flat();
+      const roomExists = sectionRange.some(h => 
+          h.toString().toLowerCase().trim() === newRoomName.toLowerCase()
+        );
+
+      if (!roomExists) {
+        let insertRow = 11;
+        const colData = invSheet.getRange(1, startCol, lastRow + 1, 1).getValues();
+        for (let i = colData.length - 1; i >= 10; i--) {
+          if (colData[i][0] !== "") {
+            insertRow = i + 2; 
+            break;
+          }
+        }
+
+        const headerRange = invSheet.getRange(insertRow, startCol, 1, numCols);
+        headerRange.merge()
+                   .setValue(newRoomName)
+                   .setBackground(headerColor)
+                   .setFontWeight("bold")
+                   .setFontSize(15) 
+                   .setFontFamily("Montserrat") 
+                   .setHorizontalAlignment("center")
+                   .setBorder(true, true, true, true, null, null);
+        
+        data.room = newRoomName; 
+        lastRow = invSheet.getLastRow(); 
+        if (action === 'createRoom') return "✅ Room '" + newRoomName + "' created successfully!";
+          } else {
+            // ERROR MESSAGE: Triggers if "Room 301" is already in the section
+            return "❌ Error: '" + newRoomName + "' already exists in " + data.type + ".";
+          }
+    }
+
+    // --- 3. FIND EXISTING ITEM (Required for Update/Remove/Add Check) ---
+    let existingRow = -1;
+    if (data.name) {
+      const searchName = data.name.trim().toLowerCase();
+      const fullRange = invSheet.getRange(1, startCol, lastRow, 1).getValues();
+      for (let i = 0; i < fullRange.length; i++) {
+        if (fullRange[i][0].toString().toLowerCase().trim() === searchName) {
+          existingRow = i + 1;
+          break;
+        }
+      }
+    }
+
+    // --- 4. ACTION BRANCHING ---
     if (action === 'add') {
       if (existingRow !== -1) return "⚠️ Item already exists in row " + existingRow;
-      if (!data.room) return "❌ Error: Please select a Room.";
-
-      // 2. FIND THE ROOM HEADER
+      
       let roomRow = -1;
       const roomSearch = data.room.trim().toLowerCase();
       const nameColValues = invSheet.getRange(1, startCol, lastRow, 1).getValues();
@@ -441,69 +483,69 @@ function modifyInventory(action, data) {
         }
       }
 
-      if (roomRow === -1) return "❌ Error: Header '" + data.room + "' not found on sheet.";
+      if (roomRow === -1) return "❌ Error: Room '" + data.room + "' not found.";
 
-      // 3. FIND FIRST EMPTY ROW UNDER THAT ROOM
       let rowToAdd = roomRow + 1;
-      while (invSheet.getRange(rowToAdd, startCol).getValue() !== "") {
-        if (invSheet.getRange(rowToAdd, startCol).getValue().toString().toLowerCase().includes("room")) {
-          invSheet.insertRowBefore(rowToAdd);
-          break; 
+      while (rowToAdd <= lastRow + 1) {
+        var val = invSheet.getRange(rowToAdd, startCol).getValue().toString();
+        if (val === "" || val.toLowerCase().includes("room")) {
+          if (val.toLowerCase().includes("room")) invSheet.insertRowBefore(rowToAdd);
+          break;
         }
         rowToAdd++;
-        if (rowToAdd > 3000) break; 
       }
 
-      // 4. SET DATA & FORMULAS
-      // Name and Stock
       invSheet.getRange(rowToAdd, startCol).setValue(data.name);
       invSheet.getRange(rowToAdd, startCol + 1).setValue(data.stock);
-
-
+      
       if (isEq) {
-        invSheet.getRange(rowToAdd, 5).setValue(data.shelf); // Column E
-
+        invSheet.getRange(rowToAdd, 5).setValue(data.shelf); 
       } else {
-        invSheet.getRange(rowToAdd, 11).setValue(data.unit); // Column K
-
+        invSheet.getRange(rowToAdd, 11).setValue(data.unit);
       }
 
-      // Formulas
       var borrowedFormula = isEq ? 
         '=SUMIF(Logs!$B$4:$B$991, "*" & A' + rowToAdd + ' & "*", Logs!$A$4:$A$991) - SUMIF(Logs!$L$4:$L$991, "*" & A' + rowToAdd + ' & "*", Logs!$K$4:$K$991)' : 
         '=SUMIF(Logs!$V$4:$V$991, "*" & G' + rowToAdd + ' & "*", Logs!$U$4:$U$991) - SUMIF(Logs!$L$4:$L$991, "*" & G' + rowToAdd + ' & "*", Logs!$K$4:$K$991)';
       
-      var availableFormula = isEq ? '=B' + rowToAdd + '- C' + rowToAdd : '=H' + rowToAdd + '- I' + rowToAdd;
-
       invSheet.getRange(rowToAdd, startCol + 2).setFormula(borrowedFormula);
-      invSheet.getRange(rowToAdd, startCol + 3).setFormula(availableFormula);
+      invSheet.getRange(rowToAdd, startCol + 3).setFormula(isEq ? '=B'+rowToAdd+'-C'+rowToAdd : '=H'+rowToAdd+'-I'+rowToAdd);
+
       updateAllFormChoicesAndColors(invSheet);
       return "✅ Success: Added to " + data.room;
 
     } else if (action === 'update') {
       if (existingRow === -1) return "❌ Item not found.";
       invSheet.getRange(existingRow, startCol + 1).setValue(data.stock);
-      // Update Shelf/Unit during update too
       if (isEq) invSheet.getRange(existingRow, 5).setValue(data.shelf);
       else invSheet.getRange(existingRow, 11).setValue(data.unit);
+      
       updateAllFormChoicesAndColors(invSheet);
-
       return "✅ Update Successful!";
 
     } else if (action === 'remove') {
       if (existingRow === -1) return "❌ Item not found.";
       invSheet.getRange(existingRow, startCol, 1, (isEq ? 5 : 6)).clearContent();
       invSheet.getRange(existingRow, startCol, 1, 5).setBackground(null);
-        updateAllFormChoicesAndColors(invSheet);
+      
+      updateAllFormChoicesAndColors(invSheet);
       return "✅ Item Removed.";
     }
-
-    updateAllFormChoicesAndColors(invSheet);
-
 
   } catch (e) {
     return "❌ Error: " + e.toString();
   }
+}
+
+
+function getExistingRooms(category) {
+  const invSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Inventory");
+  const isEq = category.includes("Equipment");
+  const startCol = isEq ? 1 : 7;
+  const data = invSheet.getRange(11, startCol, invSheet.getLastRow(), 1).getValues();
+  
+  // Filter for rows that contain "ROOM"
+  return data.flat().filter(cell => cell.toString().toUpperCase().includes("ROOM"));
 }
 
 // Function to specifically open the Item Manager Sidebar
@@ -660,42 +702,59 @@ function consolidateInstructorsForFormatting(targetDate) {
   const logSheet = ss.getSheetByName("Logs");
   const formatSheet = ss.getSheetByName("For formatting");
   
+  if (!formatSheet) {
+    ss.toast("❌ Error: 'For formatting' sheet not found.");
+    return;
+  }
+
   // 1. Setup Timeframe (Current Month)
   const now = new Date();
   const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
   const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
 
-  // 2. Define the Column Indices for Instructors and Timestamps
-  // Borrowing: Instructor Col G (6), Timestamp Col C (2)
-  // Returning: Instructor Col Q (16), Timestamp Col M (12)
-  // Consumables: Instructor Col AA (26), Timestamp Col W (22)
-  
+  // 2. Define the Column Indices
   const lastRow = logSheet.getLastRow();
   if (lastRow < 4) return;
-  const data = logSheet.getRange(4, 1, lastRow - 3, 27).getValues(); 
   
+  // Get data from Logs
+  const data = logSheet.getRange(4, 1, lastRow - 3, 27).getValues(); 
   let instructorList = [];
 
-  // 3. Extract names from all three sections
+  // 3. Extract names and force UPPERCASE
   data.forEach(row => {
-    // Section 1: Borrowing
-    if (isValidEntry(row[2], firstDay, lastDay) && row[6]) instructorList.push([row[6]]);
+    const processName = (name) => name ? [name.toString().trim().toUpperCase()] : null;
+
+    // Section 1: Borrowing (Col G is index 6)
+    if (isValidEntry(row[2], firstDay, lastDay) && row[6]) {
+      instructorList.push(processName(row[6]));
+    }
     
-    // Section 2: Returning
-    if (isValidEntry(row[12], firstDay, lastDay) && row[16]) instructorList.push([row[16]]);
+    // Section 2: Returning (Col Q is index 16)
+    if (isValidEntry(row[12], firstDay, lastDay) && row[16]) {
+      instructorList.push(processName(row[16]));
+    }
     
-    // Section 3: Consumables
-    if (isValidEntry(row[22], firstDay, lastDay) && row[26]) instructorList.push([row[26]]);
+    // Section 3: Consumables (Col AA is index 26)
+    if (isValidEntry(row[22], firstDay, lastDay) && row[26]) {
+      instructorList.push(processName(row[26]));
+    }
   });
 
   // 4. Update the "For formatting" sheet
-  formatSheet.clearContents(); // Clear old data
+  formatSheet.clear(); 
+  
   if (instructorList.length > 0) {
-    formatSheet.getRange(1, 1, instructorList.length, 1).setValues(instructorList);
+    instructorList.sort();
+    
+    formatSheet.getRange(1, 1, instructorList.length, 1)
+               .setValues(instructorList)
+               .setFontWeight("bold")
+               .setFontFamily("Montserrat"); 
   }
 
-  ss.toast("Instructors consolidated to 'For formatting' sheet!");
+  ss.toast("✅ Instructors consolidated for the Pie Graph!");
 }
+
 
 /**
  * EXCEL EXPORT LOGIC: Isolates the report and emails it
