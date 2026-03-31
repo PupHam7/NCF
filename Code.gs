@@ -1147,7 +1147,7 @@ function archiveMonthlyToYearly() {
   if (!monthlySheet || !yearlySheet) return;
 
   const now = new Date();
-  const reportDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const reportDate = new Date(now.getFullYear(), now.getMonth(), 1);
   const monthYearStr = Utilities.formatDate(reportDate, ss.getSpreadsheetTimeZone(), "MMMM yyyy").toUpperCase();
 
   // 1. Fetch Data (B4:H30 contains the header and items)
