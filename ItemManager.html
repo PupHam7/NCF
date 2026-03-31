@@ -2,35 +2,67 @@
 <html>
 <head>
   <base target="_top">
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700&display=swap" rel="stylesheet">
+  
   <style>
-    body { font-family: sans-serif; padding: 15px; background: #f4f4f9; }
+    body { 
+      font-family: 'Montserrat', sans-serif; 
+      font-size: 15px; 
+      padding: 15px; 
+      background: #f4f4f9; 
+    }
+    
+    /* Ensure all inputs and labels inherit the font and size */
+    input, select, button, label, h3 { 
+      font-family: 'Montserrat', sans-serif; 
+      font-size: 15px; 
+    }
+
     .card { background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 15px; }
-    h3 { margin-top: 0; color: #2c3e50; font-size: 16px; border-bottom: 2px solid #3498db; padding-bottom: 5px; }
-    label { font-size: 12px; font-weight: bold; color: #7f8c8d; }
-    input, select, button { width: 100%; padding: 10px; margin: 8px 0; border-radius: 4px; border: 1px solid #ddd; box-sizing: border-box; }
-    .btn-add { background: #27ae60; color: white; border: none; cursor: pointer; }
+    h3 { margin-top: 0; color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 5px; }
+    label { font-weight: bold; color: #7f8c8d; display: block; margin-top: 10px; }
+    
+    input, select, button { 
+      width: 100%; 
+      padding: 10px; 
+      margin: 5px 0 10px 0; 
+      border-radius: 4px; 
+      border: 1px solid #ddd; 
+      box-sizing: border-box; 
+    }
+
+    .btn-add { background: #27ae60; color: white; border: none; cursor: pointer; font-weight: bold; }
     .btn-update { background: #2980b9; color: white; border: none; cursor: pointer; }
     .btn-remove { background: #c0392b; color: white; border: none; cursor: pointer; }
-    #status { padding: 10px; border-radius: 4px; font-size: 12px; text-align: center; display: none; }
+    .btn-room { background-color: #356854; color: white; border: none; cursor: pointer; font-weight: bold; }
+    
+    #status { padding: 10px; border-radius: 4px; text-align: center; display: none; margin-top: 10px; }
   </style>
 </head>
 <body>
 
   <div class="card">
-    <h3>📦 Item Manager</h3>
-    <label>Target Room:</label>
-      <select id="room">
-        <option value="Room 301">Room 301</option>
-        <option value="Room 302">Room 302</option>
-        <option value="Room 303">Room 303</option>
-        <option value="Room 304">Room 304</option>
-      </select>
+    <h3>✨ Room Management</h3>
+    <label for="newRoomInput">Create New Room:</label>
+    <input type="text" id="newRoomInput" placeholder="e.g., Room 301">
+    
+    <button id="addRoomBtn" class="btn-room" onclick="createNewRoom()">
+      CREATE ROOM
+    </button>
+  </div>
 
+  <div class="card">
+    <h3>📦 Item Manager</h3>
 
     <label>CATEGORY</label>
-    <select id="type">
-      <option value="Equipment">Equipment </option>
-      <option value="Consumables">Consumables </option>
+    <select id="type" onchange="refreshRoomList()">
+      <option value="Equipment">Equipment</option>
+      <option value="Consumables">Consumables</option>
+    </select>
+
+    <label>TARGET ROOM</label>
+    <select id="room">
+      <option value="">-- Select Room --</option>
     </select>
     
     <label>ITEM NAME</label>
@@ -39,10 +71,10 @@
     <label>STOCK QUANTITY</label>
     <input type="number" id="itemStock" placeholder="Enter number">
 
-      <div id="extraFieldArea">
-        <label id="extraLabel">Shelf:</label>
-        <input type="text" id="extraValue" placeholder="e.g. Shelf A-1">
-      </div>
+    <div id="extraFieldArea">
+      <label id="extraLabel">Shelf:</label>
+      <input type="text" id="extraValue" placeholder="e.g. Shelf A-1">
+    </div>
     
     <button class="btn-add" onclick="run('add')">ADD NEW ITEM</button>
     <button class="btn-update" onclick="run('update')">UPDATE STOCK LEVEL</button>
@@ -52,42 +84,89 @@
   <div id="status"></div>
 
 <script>
-  // This listener changes the label from "Shelf" to "Unit" based on selection
+  // Initial load of rooms
+  window.onload = refreshRoomList;
+
+  // Change labels based on category
   document.getElementById('type').addEventListener('change', function() {
     var label = this.value === 'Equipment' ? 'Shelf:' : 'Unit:';
     document.getElementById('extraLabel').innerText = label;
   });
 
-function run(action) {
-  const status = document.getElementById('status');
-  const stockInput = document.getElementById('itemStock').value; // Get stock value
-  
-  const data = {
-    room: document.getElementById('room').value,
-    type: document.getElementById('type').value,
-    name: document.getElementById('itemName').value,
-    stock: stockInput,
-    shelf: document.getElementById('extraValue').value,
-    unit: document.getElementById('extraValue').value
-  };
-
-  // ERROR PREVENTION: Check for Item Name
-  if (!data.name) {
-    alert("⚠️ Please enter an Item Name.");
-    return;
+  // Fetch rooms from the sheet based on category
+  function refreshRoomList() {
+    const category = document.getElementById('type').value;
+    google.script.run.withSuccessHandler(updateRoomDropdown).getExistingRooms(category);
   }
 
-  // ERROR PREVENTION: Check for empty Stock on Add or Update
-  if ((action === 'add' || action === 'update') && stockInput === "") {
-    alert("⚠️ Please enter a Stock Quantity.");
-    return;
+  // Helper to rebuild the Room dropdown
+  function updateRoomDropdown(rooms) {
+    const select = document.getElementById('room');
+    select.innerHTML = ""; // Clear current
+    
+    if (rooms.length === 0) {
+      select.innerHTML = '<option value="">No Rooms Found</option>';
+      return;
+    }
+
+    rooms.forEach(room => {
+      let opt = document.createElement('option');
+      opt.value = room;
+      opt.innerHTML = room;
+      select.appendChild(opt);
+    });
   }
 
-  status.style.display = "block";
-  status.style.background = "#eee";
-  status.innerText = "Processing...";
+  function createNewRoom() {
+    const roomName = document.getElementById('newRoomInput').value.trim();
+    const category = document.getElementById('type').value; 
 
-    // Send directly to the .gs function
+    if (!roomName) {
+      alert("⚠️ Please enter a Room Name.");
+      return;
+    }
+
+    const btn = document.getElementById('addRoomBtn');
+    btn.disabled = true;
+    btn.innerText = "CREATING...";
+
+    google.script.run
+      .withSuccessHandler(function(msg) {
+        alert(msg);
+        document.getElementById('newRoomInput').value = "";
+        btn.disabled = false;
+        btn.innerText = "CREATE ROOM";
+        refreshRoomList(); // Refresh the list so the new room appears
+      })
+      .modifyInventory('createRoom', { 
+        newRoom: roomName, 
+        type: category 
+      });
+  }
+
+  function run(action) {
+    const status = document.getElementById('status');
+    const stockInput = document.getElementById('itemStock').value;
+    
+    const data = {
+      room: document.getElementById('room').value,
+      type: document.getElementById('type').value,
+      name: document.getElementById('itemName').value,
+      stock: stockInput,
+      shelf: document.getElementById('extraValue').value,
+      unit: document.getElementById('extraValue').value
+    };
+
+    if (!data.name) { alert("⚠️ Please enter an Item Name."); return; }
+    if ((action === 'add' || action === 'update') && stockInput === "") {
+      alert("⚠️ Please enter a Stock Quantity.");
+      return;
+    }
+
+    status.style.display = "block";
+    status.style.background = "#eee";
+    status.innerText = "Processing...";
+
     google.script.run
       .withSuccessHandler(msg => {
         status.innerText = msg;
